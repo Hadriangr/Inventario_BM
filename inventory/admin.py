@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django import forms
 
 from .models import (
     UnidadMedida,
@@ -9,7 +10,34 @@ from .models import (
     StockInsumo,
     Plato,
     RecetaInsumo,
+    LoteInsumo,
+    MovimientoInventario,
 )
+
+@admin.register(LoteInsumo)
+class LoteInsumoAdmin(admin.ModelAdmin):
+    list_display = (
+        "insumo",
+        "almacen",
+        "numero_lote",
+        "fecha_vencimiento",
+        "cantidad_actual",
+        "costo_unitario",
+        "activo",
+    )
+    list_filter = (
+        "almacen",
+        "insumo",
+        "activo",
+        "fecha_vencimiento",
+    )
+    search_fields = (
+        "insumo__nombre",
+        "almacen__nombre",
+        "numero_lote",
+    )
+    autocomplete_fields = ("insumo", "almacen")
+
 
 
 @admin.register(UnidadMedida)
@@ -31,8 +59,22 @@ class CategoriaInsumoAdmin(admin.ModelAdmin):
     list_filter = ("activo",)
     search_fields = ("nombre",)
 
+class InsumoAdminForm(forms.ModelForm):
+    class Meta:
+        model = Insumo
+        fields = "__all__"
+        labels = {
+            "unidad": "Unidad de consumo",
+            "unidad_compra": "Unidad de compra",
+            "factor_conversion": "Factor de conversión",   
+        }
+
+
 @admin.register(Insumo)
 class InsumoAdmin(admin.ModelAdmin):
+    form = InsumoAdminForm   
+    readonly_fields = ("costo_promedio", "created_at", "updated_at")
+
     list_display = (
         "nombre",
         "categoria",
@@ -45,8 +87,7 @@ class InsumoAdmin(admin.ModelAdmin):
     )
     list_filter = ("activo", "unidad", "proveedor_principal")
     search_fields = ("nombre",)
-    autocomplete_fields = ("unidad", "proveedor_principal")
-
+    autocomplete_fields = ("unidad", "proveedor_principal", "unidad_compra")
 
 @admin.register(Almacen)
 class AlmacenAdmin(admin.ModelAdmin):
@@ -63,11 +104,17 @@ class StockInsumoAdmin(admin.ModelAdmin):
         "almacen",
         "cantidad_actual",
         "costo_promedio",
+        "valor_total",
         "updated_at",
     )
     list_filter = ("almacen", "insumo")
     search_fields = ("insumo__nombre", "almacen__nombre")
     autocomplete_fields = ("insumo", "almacen")
+
+    readonly_fields = ("costo_promedio", "created_at", "updated_at")
+
+    def valor_total(self, obj):
+        return obj.valor_total
 
 
 @admin.register(Plato)
@@ -84,3 +131,59 @@ class RecetaInsumoAdmin(admin.ModelAdmin):
     search_fields = ("plato__nombre", "insumo__nombre")
     autocomplete_fields = ("plato", "insumo")
 
+@admin.register(MovimientoInventario)
+class MovimientoInventarioAdmin(admin.ModelAdmin):
+    list_display = (
+        "tipo",
+        "insumo",
+        "almacen",
+        "cantidad",
+        "costo_unitario",
+        "costo_total",
+        "fecha_movimiento",
+        "usuario",
+    )
+    list_filter = (
+        "tipo",
+        "almacen",
+        "insumo",
+        "usuario",
+        "fecha_movimiento",
+    )
+    search_fields = (
+        "insumo__nombre",
+        "almacen__nombre",
+        "motivo",
+        "referencia",
+    )
+    autocomplete_fields = ("insumo", "almacen", "usuario")
+
+    readonly_fields = (
+        "costo_total",
+        "created_at",
+        "updated_at",
+    )
+
+    fieldsets = (
+        (None, {
+            "fields": (
+                "tipo",
+                "insumo",
+                "almacen",
+                "cantidad",
+                "costo_unitario",
+                "costo_total",
+                "fecha_movimiento",
+            )
+        }),
+        ("Información adicional", {
+            "classes": ("collapse",),
+            "fields": (
+                "motivo",
+                "referencia",
+                "usuario",
+                "created_at",
+                "updated_at",
+            )
+        }),
+    )
