@@ -217,10 +217,9 @@ class StockInsumoSerializer(serializers.ModelSerializer):
 
 
 class PlatoSerializer(serializers.ModelSerializer):
-    """
-    Por ahora el plato no incluye la receta anidada.
-    Más adelante podemos crear un serializer 'detallado' que incluya RecetaInsumo.
-    """
+    food_cost_porcentaje = serializers.SerializerMethodField()
+    margen_bruto = serializers.SerializerMethodField()
+    margen_bruto_porcentaje = serializers.SerializerMethodField()
 
     class Meta:
         model = Plato
@@ -231,10 +230,36 @@ class PlatoSerializer(serializers.ModelSerializer):
             "precio_venta",
             "categoria",
             "activo",
+            "costo_receta",
+            "food_cost_porcentaje",
+            "margen_bruto",
+            "margen_bruto_porcentaje",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "costo_receta",
+            "food_cost_porcentaje",
+            "margen_bruto",
+            "margen_bruto_porcentaje",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_food_cost_porcentaje(self, obj):
+        return str(obj.food_cost_porcentaje) if obj.food_cost_porcentaje is not None else None
+
+    def get_margen_bruto(self, obj):
+        return str(obj.margen_bruto) if obj.margen_bruto is not None else None
+
+    def get_margen_bruto_porcentaje(self, obj):
+        return (
+            str(obj.margen_bruto_porcentaje)
+            if obj.margen_bruto_porcentaje is not None
+            else None
+        )
+
 
 
 class RecetaInsumoSerializer(serializers.ModelSerializer):
@@ -266,3 +291,74 @@ class RecetaInsumoSerializer(serializers.ModelSerializer):
                 "La cantidad debe ser mayor a cero."
             )
         return value
+
+    def validate(self, attrs):
+        plato = attrs.get("plato") or getattr(self.instance, "plato", None)
+        insumo = attrs.get("insumo") or getattr(self.instance, "insumo", None)
+
+        if plato and insumo:
+            qs = RecetaInsumo.objects.filter(plato=plato, insumo=insumo)
+            if self.instance is not None:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"insumo": "Este insumo ya está en la receta de este plato."}
+                )
+
+        # validación opcional: insumo activo
+        if insumo and not insumo.activo:
+            raise serializers.ValidationError(
+                {"insumo": "No se puede usar un insumo inactivo en una receta."}
+            )
+
+        return attrs
+    
+class PlatoDetalleSerializer(serializers.ModelSerializer):
+    receta = RecetaInsumoSerializer(
+        source="receta_insumos",
+        many=True,
+        read_only=True,
+    )
+    food_cost_porcentaje = serializers.SerializerMethodField()
+    margen_bruto = serializers.SerializerMethodField()
+    margen_bruto_porcentaje = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Plato
+        fields = [
+            "id",
+            "nombre",
+            "descripcion",
+            "precio_venta",
+            "categoria",
+            "activo",
+            "costo_receta",
+            "food_cost_porcentaje",
+            "margen_bruto",
+            "margen_bruto_porcentaje",
+            "created_at",
+            "updated_at",
+            "receta",
+        ]
+        read_only_fields = [
+            "id",
+            "costo_receta",
+            "food_cost_porcentaje",
+            "margen_bruto",
+            "margen_bruto_porcentaje",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_food_cost_porcentaje(self, obj):
+        return str(obj.food_cost_porcentaje) if obj.food_cost_porcentaje is not None else None
+
+    def get_margen_bruto(self, obj):
+        return str(obj.margen_bruto) if obj.margen_bruto is not None else None
+
+    def get_margen_bruto_porcentaje(self, obj):
+        return (
+            str(obj.margen_bruto_porcentaje)
+            if obj.margen_bruto_porcentaje is not None
+            else None
+        )

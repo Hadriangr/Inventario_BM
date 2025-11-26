@@ -4,6 +4,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.db.models import Q, F
 from datetime import date, timedelta
+from inventory.models import Plato, RecetaInsumo
 
 from inventory.models import (
     Insumo,
@@ -325,3 +326,30 @@ def _actualizar_costo_promedio_insumo(insumo: Insumo) -> None:
         insumo.costo_promedio = Decimal("0")
 
     insumo.save(update_fields=["costo_promedio", "updated_at"])
+
+def calcular_costo_receta(*, plato: Plato, guardar: bool = True) -> Decimal:
+    """
+    Calcula el costo total de la receta de un plato, sumando:
+        suma( cantidad_insumo * costo_promedio_insumo )
+
+    - Usa la unidad de consumo del insumo.
+    - Si guardar=True, actualiza plato.costo_receta en BD.
+    - Devuelve el costo calculado (Decimal).
+    """
+    total = Decimal("0")
+
+    receta = RecetaInsumo.objects.select_related("insumo").filter(plato=plato)
+
+    for linea in receta:
+        insumo = linea.insumo
+        costo_unitario = insumo.costo_promedio or Decimal("0")
+        cantidad = linea.cantidad or Decimal("0")
+        total += cantidad * costo_unitario
+
+    total = total.quantize(Decimal("0.0001"))
+
+    if guardar:
+        plato.costo_receta = total
+        plato.save(update_fields=["costo_receta", "updated_at"])
+
+    return total

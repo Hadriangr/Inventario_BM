@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 User = get_user_model()
 
@@ -283,17 +284,66 @@ class Plato(TimeStampedModel):
         help_text="Precio de venta al público.",
     )
     categoria = models.CharField(
-        max_length=50,
+        max_length=100,
         blank=True,
         help_text="Ej: entrada, principal, postre...",
     )
     activo = models.BooleanField(default=True)
 
+    costo_receta = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        default=0,
+        help_text="Costo total de la receta para una porción/unidad del plato.",
+    )
     class Meta:
         ordering = ["nombre"]
 
     def __str__(self):
         return self.nombre
+    @property
+    def food_cost_porcentaje(self) -> Decimal | None:
+        """
+        Retorna el % de food cost:
+            (costo_receta / precio_venta) * 100
+        o None si no hay precio_venta.
+        """
+        if not self.precio_venta or self.precio_venta <= 0:
+            return None
+        try:
+            valor = (self.costo_receta / self.precio_venta) * Decimal("100")
+            return valor.quantize(Decimal("0.01"))
+        except (InvalidOperation, ZeroDivisionError):
+            return None
+
+    @property
+    def margen_bruto(self) -> Decimal | None:
+        """
+        Retorna el margen bruto en moneda:
+            precio_venta - costo_receta
+        o None si no hay precio_venta.
+        """
+        if self.precio_venta is None:
+            return None
+        return (self.precio_venta - self.costo_receta).quantize(Decimal("0.0001"))
+
+    @property
+    def margen_bruto_porcentaje(self) -> Decimal | None:
+        """
+        Retorna el margen bruto en %:
+            (margen_bruto / precio_venta) * 100
+        o None si no hay precio_venta.
+        """
+        if not self.precio_venta or self.precio_venta <= 0:
+            return None
+        margen = self.margen_bruto
+        if margen is None:
+            return None
+        try:
+            valor = (margen / self.precio_venta) * Decimal("100")
+            return valor.quantize(Decimal("0.01"))
+        except (InvalidOperation, ZeroDivisionError):
+            return None
 
 
 class RecetaInsumo(TimeStampedModel):
@@ -313,13 +363,14 @@ class RecetaInsumo(TimeStampedModel):
     )
     cantidad = models.DecimalField(
         max_digits=12,
-        decimal_places=3,
+        decimal_places=4,
         help_text="Cantidad necesaria por unidad de plato, en unidad del insumo.",
     )
 
     class Meta:
         verbose_name = "Ingrediente de receta"
         verbose_name_plural = "Ingredientes de receta"
+        ordering = ["plato", "insumo"]
         unique_together = ("plato", "insumo")
 
     def __str__(self):
