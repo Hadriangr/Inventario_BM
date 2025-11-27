@@ -353,3 +353,116 @@ def calcular_costo_receta(*, plato: Plato, guardar: bool = True) -> Decimal:
         plato.save(update_fields=["costo_receta", "updated_at"])
 
     return total
+
+@transaction.atomic
+def registrar_traspaso(
+    *,
+    insumo: Insumo,
+    almacen_origen: Almacen,
+    almacen_destino: Almacen,
+    cantidad: Decimal,
+    usuario=None,
+    motivo: str = "",
+    referencia: str = "",
+    fecha_movimiento=None,
+) -> tuple[MovimientoInventario, MovimientoInventario]:
+    """
+    Registra un TRASPASO de inventario entre dos almacenes.
+
+    - Disminuye stock en el almacén_origen (SALIDA_TRASPASO, cantidad negativa).
+    - Aumenta stock en el almacén_destino (ENTRADA_TRASPASO, cantidad positiva).
+    - Mantiene el costo valorado: el destino recibe el insumo al costo_promedio
+      del origen, ajustando su propio costo_promedio por ponderación.
+
+    Reglas:
+    - cantidad > 0
+    - origen != destino
+    - No permite dejar stock negativo en origen.
+    """
+    if cantidad <= 0:
+        raise MovimientoInventarioError("La cantidad del traspaso debe ser > 0.")
+
+    if almacen_origen == almacen_destino:
+        raise MovimientoInventarioError("El almacén de origen y destino no pueden ser el mismo.")
+
+    if fecha_movimiento is None:
+        fecha_movimiento = timezone.now()
+
+    # --- Stock origen ---
+    try:
+        stock_origen = StockInsumo.objects.select_for_update().get(
+            insumo=insumo,
+            almacen=almacen_origen,
+        )
+    except StockInsumo.DoesNotExist:
+        raise MovimientoInventarioError(
+            "No existe stock para este insumo en el almacén de origen."
+        )
+
+    cantidad_origen = stock_origen.cantidad_actual or Decimal("0")
+    if cantidad_origen < cantidad:
+        raise MovimientoInventarioError(
+            "No hay suficiente stock en el almacén de origen para el traspaso."
+        )
+
+    costo_origen = stock_origen.costo_promedio or Decimal("0")
+
+    # Nuevo stock en origen
+    stock_origen.cantidad_actual = cantidad_origen - cantidad
+    stock_origen.save(update_fields=["cantidad_actual", "updated_at"])
+
+    # --- Stock destino ---
+    stock_destino, _created = StockInsumo.objects.select_for_update().get_or_create(
+        insumo=insumo,
+        almacen=almacen_destino,
+        defaults={
+            "cantidad_actual": Decimal("0"),
+            "costo_promedio": costo_origen,
+        },
+    )
+
+    cantidad_destino_ant = stock_destino.cantidad_actual or Decimal("0")
+    costo_destino_ant = stock_destino.costo_promedio or Decimal("0")
+
+    nueva_cantidad_destino = cantidad_destino_ant + cantidad
+
+    if cantidad_destino_ant <= 0:
+        nuevo_costo_destino = costo_origen
+    else:
+        valor_ant = cantidad_destino_ant * costo_destino_ant
+        valor_nuevo = cantidad * costo_origen
+        nuevo_costo_destino = (valor_ant + valor_nuevo) / nueva_cantidad_destino
+
+    stock_destino.cantidad_actual = nueva_cantidad_destino
+    stock_destino.costo_promedio = nuevo_costo_destino.quantize(Decimal("0.0001"))
+    stock_destino.save(update_fields=["cantidad_actual", "costo_promedio", "updated_at"])
+
+    # Actualizamos costo_promedio global del insumo (no cambia el valor total, solo distribución)
+    _actualizar_costo_promedio_insumo(insumo)
+
+    # --- Movimientos ---
+    mov_salida = MovimientoInventario.objects.create(
+        insumo=insumo,
+        almacen=almacen_origen,
+        tipo=MovimientoInventario.TIPO_SALIDA_TRASPASO,
+        cantidad=-cantidad,  # salida → negativa
+        costo_unitario=costo_origen,
+        fecha_movimiento=fecha_movimiento,
+        motivo=motivo or "Traspaso a almacén {}".format(almacen_destino.nombre),
+        referencia=referencia,
+        usuario=usuario,
+    )
+
+    mov_entrada = MovimientoInventario.objects.create(
+        insumo=insumo,
+        almacen=almacen_destino,
+        tipo=MovimientoInventario.TIPO_ENTRADA_TRASPASO,
+        cantidad=cantidad,  # entrada → positiva
+        costo_unitario=costo_origen,
+        fecha_movimiento=fecha_movimiento,
+        motivo=motivo or "Traspaso desde almacén {}".format(almacen_origen.nombre),
+        referencia=referencia,
+        usuario=usuario,
+    )
+
+    return mov_salida, mov_entrada

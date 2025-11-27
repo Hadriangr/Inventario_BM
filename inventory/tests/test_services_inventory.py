@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -9,13 +10,18 @@ from inventory.models import (
     Almacen,
     Insumo,
     StockInsumo,
-    registrar_ajuste_inventario,
+    LoteInsumo,
+    MovimientoInventario,
 )
 from inventory.services.inventory import (
     registrar_entrada_compra,
-    MovimientoInventarioError,
+    registrar_ajuste_inventario,
+    registrar_traspaso,
     obtener_stocks_bajo_minimo,
     obtener_stocks_sobre_maximo,
+    obtener_lotes_por_vencer,
+    obtener_lotes_vencidos,
+    MovimientoInventarioError,
 )
 
 User = get_user_model()
@@ -50,7 +56,9 @@ class RegistrarEntradaCompraTests(TestCase):
         )
 
     def test_registrar_entrada_compra_crea_stock_si_no_existe(self):
-        self.assertFalse(StockInsumo.objects.filter(insumo=self.insumo, almacen=self.almacen).exists())
+        self.assertFalse(
+            StockInsumo.objects.filter(insumo=self.insumo, almacen=self.almacen).exists()
+        )
 
         movimiento = registrar_entrada_compra(
             insumo=self.insumo,
@@ -130,6 +138,7 @@ class RegistrarEntradaCompraTests(TestCase):
                 costo_unitario=Decimal("0"),
                 usuario=self.user,
             )
+
 
 class RegistrarAjusteInventarioTests(TestCase):
     def setUp(self):
@@ -214,7 +223,6 @@ class RegistrarAjusteInventarioTests(TestCase):
         self.assertEqual(self.insumo.costo_promedio, Decimal("100.0000"))
 
     def test_ajuste_negativo_no_permite_stock_negativo(self):
-        # Stock inexistente o 0
         StockInsumo.objects.create(
             insumo=self.insumo,
             almacen=self.almacen,
@@ -239,9 +247,10 @@ class RegistrarAjusteInventarioTests(TestCase):
                 almacen=self.almacen,
                 cantidad=Decimal("5.000"),
                 usuario=self.user,
-                motivo="   ",  # solo espacios
+                motivo="   ",
                 referencia="AJ-004",
             )
+
 
 class AlertasStockTests(TestCase):
     def setUp(self):
@@ -338,18 +347,6 @@ class AlertasStockTests(TestCase):
         self.assertIn("Insumo Sobre", nombres)
         self.assertNotIn("Insumo Bajo", nombres)
         self.assertNotIn("Insumo OK", nombres)
-
-from datetime import date, timedelta
-from inventory.models import LoteInsumo
-from inventory.services.inventory import (
-    registrar_entrada_compra,
-    registrar_ajuste_inventario,
-    obtener_lotes_bajo_minimo,
-    obtener_stocks_sobre_maximo,
-    obtener_lotes_por_vencer,
-    obtener_lotes_vencidos,
-    MovimientoInventarioError,
-)
 
 
 class LotesInventarioTests(TestCase):
@@ -450,3 +447,98 @@ class LotesInventarioTests(TestCase):
         self.assertIn("VENCIDO", nombres_vencidos)
         self.assertNotIn("PROX", nombres_vencidos)
         self.assertNotIn("LEJOS", nombres_vencidos)
+
+
+class TraspasoInventarioTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="user_traspaso",
+            password="password123",
+        )
+
+        self.unidad = UnidadMedida.objects.create(
+            nombre="Gramo",
+            abreviatura="g",
+            es_base=True,
+            factor_base=Decimal("1"),
+        )
+
+        self.insumo = Insumo.objects.create(
+            nombre="Queso rallado",
+            unidad=self.unidad,
+            costo_promedio=Decimal("0"),
+        )
+
+        self.almacen_origen = Almacen.objects.create(
+            nombre="Bodega Principal",
+            ubicacion="Local Centro",
+            responsable=self.user,
+        )
+        self.almacen_destino = Almacen.objects.create(
+            nombre="Cocina",
+            ubicacion="Local Centro",
+            responsable=self.user,
+        )
+
+        # Cargamos stock inicial en origen vía compra
+        registrar_entrada_compra(
+            insumo=self.insumo,
+            almacen=self.almacen_origen,
+            cantidad=Decimal("10.000"),
+            costo_unitario=Decimal("100.00"),
+            usuario=self.user,
+            motivo="Compra inicial",
+            referencia="FAC-TR-001",
+            fecha_movimiento=timezone.now(),
+        )
+        self.insumo.refresh_from_db()
+
+    def test_traspaso_simple_disminuye_origen_y_aumenta_destino(self):
+        mov_salida, mov_entrada = registrar_traspaso(
+            insumo=self.insumo,
+            almacen_origen=self.almacen_origen,
+            almacen_destino=self.almacen_destino,
+            cantidad=Decimal("4.000"),
+            usuario=self.user,
+            motivo="Traspaso a cocina",
+            referencia="TR-001",
+        )
+
+        stock_origen = StockInsumo.objects.get(
+            insumo=self.insumo, almacen=self.almacen_origen
+        )
+        stock_destino = StockInsumo.objects.get(
+            insumo=self.insumo, almacen=self.almacen_destino
+        )
+
+        self.assertEqual(stock_origen.cantidad_actual, Decimal("6.000"))
+        self.assertEqual(stock_destino.cantidad_actual, Decimal("4.000"))
+
+        self.assertEqual(stock_origen.costo_promedio, Decimal("100.0000"))
+        self.assertEqual(stock_destino.costo_promedio, Decimal("100.0000"))
+
+        self.assertEqual(mov_salida.tipo, MovimientoInventario.TIPO_SALIDA_TRASPASO)
+        self.assertEqual(mov_salida.cantidad, Decimal("-4.000"))
+
+        self.assertEqual(mov_entrada.tipo, MovimientoInventario.TIPO_ENTRADA_TRASPASO)
+        self.assertEqual(mov_entrada.cantidad, Decimal("4.000"))
+
+    def test_traspaso_no_permite_mismo_almacen(self):
+        with self.assertRaises(MovimientoInventarioError):
+            registrar_traspaso(
+                insumo=self.insumo,
+                almacen_origen=self.almacen_origen,
+                almacen_destino=self.almacen_origen,
+                cantidad=Decimal("1.000"),
+                usuario=self.user,
+            )
+
+    def test_traspaso_no_permite_stock_insuficiente(self):
+        with self.assertRaises(MovimientoInventarioError):
+            registrar_traspaso(
+                insumo=self.insumo,
+                almacen_origen=self.almacen_origen,
+                almacen_destino=self.almacen_destino,
+                cantidad=Decimal("50.000"),
+                usuario=self.user,
+            )

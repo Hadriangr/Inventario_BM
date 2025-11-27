@@ -388,12 +388,17 @@ class MovimientoInventario(TimeStampedModel):
     TIPO_ENTRADA_COMPRA = "ENTRADA_COMPRA"
     TIPO_ENTRADA_AJUSTE = "ENTRADA_AJUSTE"
     TIPO_SALIDA_AJUSTE = "SALIDA_AJUSTE"
-
+    TIPO_ENTRADA_TRASPASO = "ENTRADA_TRASPASO"
+    TIPO_SALIDA_TRASPASO = "SALIDA_TRASPASO"
 
     TIPO_CHOICES = [
         (TIPO_ENTRADA_COMPRA, "Entrada por compra"),
         (TIPO_ENTRADA_AJUSTE, "Entrada por ajuste"),
         (TIPO_SALIDA_AJUSTE, "Salida por ajuste"),
+        (TIPO_ENTRADA_TRASPASO, "Entrada por traspaso"),
+        (TIPO_SALIDA_TRASPASO, "Salida por traspaso"),
+
+
 
     ]
 
