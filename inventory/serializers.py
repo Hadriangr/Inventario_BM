@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from inventory.services.inventory import ResultadoConteoInventario
 
 from .models import (
     UnidadMedida,
@@ -260,6 +261,42 @@ class PlatoSerializer(serializers.ModelSerializer):
             else None
         )
 
+class ConteoLineaInputSerializer(serializers.Serializer):
+    insumo_id = serializers.IntegerField()
+    cantidad_contada = serializers.DecimalField(max_digits=14, decimal_places=3)
+
+class ResultadoConteoSerializer(serializers.Serializer):
+    insumo_id = serializers.IntegerField()
+    insumo_nombre = serializers.CharField()
+    cantidad_sistema = serializers.DecimalField(max_digits=14, decimal_places=3)
+    cantidad_contada = serializers.DecimalField(max_digits=14, decimal_places=3)
+    diferencia = serializers.DecimalField(max_digits=14, decimal_places=3)
+    fuera_tolerancia = serializers.BooleanField()
+
+    @classmethod
+    def from_resultado(cls, res: ResultadoConteoInventario):
+        return cls(
+            {
+                "insumo_id": res.insumo.id,
+                "insumo_nombre": res.insumo.nombre,
+                "cantidad_sistema": res.cantidad_sistema,
+                "cantidad_contada": res.cantidad_contada,
+                "diferencia": res.diferencia,
+                "fuera_tolerancia": res.fuera_tolerancia,
+            }
+        )
+class ConteoInventarioRequestSerializer(serializers.Serializer):
+    conteos = ConteoLineaInputSerializer(many=True)
+    tolerancia_unidades = serializers.DecimalField(
+        max_digits=14, decimal_places=3, required=False, allow_null=True
+    )
+    tolerancia_porcentaje = serializers.DecimalField(
+        max_digits=5, decimal_places=4, required=False, allow_null=True,
+        help_text="Ej: 0.02 = 2%."
+    )
+    aplicar_solo_fuera_tolerancia = serializers.BooleanField(
+        required=False, default=True
+    )
 
 
 class RecetaInsumoSerializer(serializers.ModelSerializer):

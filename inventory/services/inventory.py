@@ -5,6 +5,8 @@ from django.utils import timezone
 from django.db.models import Q, F
 from datetime import date, timedelta
 from inventory.models import Plato, RecetaInsumo
+from dataclasses import dataclass
+
 
 from inventory.models import (
     Insumo,
@@ -12,6 +14,8 @@ from inventory.models import (
     StockInsumo,
     MovimientoInventario,
     LoteInsumo,
+    Plato,
+    RecetaInsumo,
 )
 
 
@@ -466,3 +470,336 @@ def registrar_traspaso(
     )
 
     return mov_salida, mov_entrada
+
+
+@dataclass
+class ResultadoConteoInventario:
+    insumo: Insumo
+    cantidad_sistema: Decimal
+    cantidad_contada: Decimal
+    diferencia: Decimal
+    fuera_tolerancia: bool
+
+@dataclass
+class ResultadoConteoInventario:
+    insumo: Insumo
+    cantidad_sistema: Decimal
+    cantidad_contada: Decimal
+    diferencia: Decimal
+    fuera_tolerancia: bool
+
+def calcular_diferencias_conteo(
+    *,
+    almacen: Almacen,
+    conteos: list[dict],
+    tolerancia_unidades: Decimal | None = None,
+    tolerancia_porcentaje: Decimal | None = None,
+) -> list[ResultadoConteoInventario]:
+    """
+    Calcula diferencias entre el stock del sistema y un conteo físico.
+
+    Parámetros:
+    - almacen: almacén donde se hizo el conteo.
+    - conteos: lista de dicts con al menos:
+        {
+            "insumo_id": <int>,
+            "cantidad_contada": <Decimal | str | float>
+        }
+      (idealmente vendrán desde el frontend en JSON).
+    - tolerancia_unidades: diferencia absoluta permitida (ej: 1.000).
+    - tolerancia_porcentaje: diferencia relativa permitida (ej: 0.02 = 2%).
+
+    Retorna una lista de ResultadoConteoInventario.
+    """
+
+    # Mapeo insumo_id -> cantidad_contada
+    mapa_contados: dict[int, Decimal] = {}
+    for item in conteos:
+        insumo_id = int(item["insumo_id"])
+        cantidad = Decimal(str(item["cantidad_contada"]))
+        mapa_contados[insumo_id] = cantidad
+
+    # Cargar stocks del almacén para todos esos insumos
+    insumos_ids = list(mapa_contados.keys())
+    stocks = (
+        StockInsumo.objects.select_related("insumo")
+        .filter(almacen=almacen, insumo_id__in=insumos_ids)
+    )
+
+    stocks_por_insumo: dict[int, StockInsumo] = {s.insumo_id: s for s in stocks}
+
+    resultados: list[ResultadoConteoInventario] = []
+
+    for insumo_id, cantidad_contada in mapa_contados.items():
+        stock = stocks_por_insumo.get(insumo_id)
+        if stock is None:
+            # Si no hay StockInsumo, el sistema asume 0
+            cantidad_sistema = Decimal("0")
+            insumo = Insumo.objects.get(pk=insumo_id)
+        else:
+            cantidad_sistema = stock.cantidad_actual or Decimal("0")
+            insumo = stock.insumo
+
+        diferencia = cantidad_contada - cantidad_sistema
+
+        # Evaluar tolerancia
+        fuera_tolerancia = False
+        diff_abs = abs(diferencia)
+
+        if tolerancia_unidades is not None and diff_abs > tolerancia_unidades:
+            fuera_tolerancia = True
+
+        if tolerancia_porcentaje is not None:
+            base = max(cantidad_sistema, Decimal("1"))  # evitar div/0
+            diff_rel = diff_abs / base  # ej: 0.05 = 5%
+            if diff_rel > tolerancia_porcentaje:
+                fuera_tolerancia = True
+
+        # Si no se definió ninguna tolerancia,
+        # marcamos fuera_tolerancia solo si hay diferencia ≠ 0.
+        if tolerancia_unidades is None and tolerancia_porcentaje is None:
+            fuera_tolerancia = (diferencia != 0)
+
+        resultados.append(
+            ResultadoConteoInventario(
+                insumo=insumo,
+                cantidad_sistema=cantidad_sistema,
+                cantidad_contada=cantidad_contada,
+                diferencia=diferencia,
+                fuera_tolerancia=fuera_tolerancia,
+            )
+        )
+
+    return resultados
+
+@transaction.atomic
+def aplicar_ajustes_conteo(
+    *,
+    almacen: Almacen,
+    conteos: list[dict],
+    usuario=None,
+    tolerancia_unidades: Decimal | None = None,
+    tolerancia_porcentaje: Decimal | None = None,
+    referencia: str = "",
+    aplicar_solo_fuera_tolerancia: bool = True,
+) -> tuple[list[ResultadoConteoInventario], list[MovimientoInventario]]:
+    """
+    Aplica ajustes de inventario en base a un conteo físico.
+
+    - Calcula diferencias vs stock del sistema.
+    - Genera ajustes (entrada/salida) usando registrar_ajuste_inventario
+      solo cuando corresponda.
+
+    Retorna:
+    - lista de resultados (dif/sistema/contado/flag)
+    - lista de movimientos de ajuste creados
+    """
+
+    resultados = calcular_diferencias_conteo(
+        almacen=almacen,
+        conteos=conteos,
+        tolerancia_unidades=tolerancia_unidades,
+        tolerancia_porcentaje=tolerancia_porcentaje,
+    )
+
+    movimientos: list[MovimientoInventario] = []
+    hoy = timezone.now().date()
+    referencia_base = referencia or f"CONTEO-{hoy.isoformat()}"
+
+    for idx, res in enumerate(resultados, start=1):
+        if res.diferencia == 0:
+            continue
+
+        if aplicar_solo_fuera_tolerancia and not res.fuera_tolerancia:
+            continue
+
+        motivo = f"Ajuste por conteo físico ({hoy.isoformat()})"
+        ref_linea = f"{referencia_base}-L{idx}"
+
+        mov = registrar_ajuste_inventario(
+            insumo=res.insumo,
+            almacen=almacen,
+            cantidad=res.diferencia,  # puede ser + (entrada) o - (salida)
+            usuario=usuario,
+            motivo=motivo,
+            referencia=ref_linea,
+        )
+        movimientos.append(mov)
+
+    return resultados, movimientos
+
+
+@transaction.atomic
+def registrar_consumo_receta(
+    *,
+    plato: Plato,
+    almacen: Almacen,
+    cantidad_platos: Decimal,
+    usuario=None,
+    motivo: str = "",
+    referencia: str = "",
+    fecha_movimiento=None,
+) -> list[MovimientoInventario]:
+    """
+    Registra el CONSUMO de insumos según la receta de un plato.
+
+    - Para cada línea de receta (insumo + cantidad_por_plato):
+        cantidad_total = cantidad_por_plato * cantidad_platos
+    - Verifica que haya stock suficiente en el almacén.
+    - Descuenta stock en StockInsumo.
+    - Crea un MovimientoInventario SALIDA_CONSUMO_RECETA por insumo,
+      con costo_unitario igual al costo_promedio actual del stock.
+
+    NOTA: versión MVP sin manejo por lotes (usa solo StockInsumo).
+    """
+
+    if cantidad_platos <= 0:
+        raise MovimientoInventarioError("La cantidad de platos debe ser > 0.")
+
+    if not plato.activo:
+        raise MovimientoInventarioError("No se puede consumir receta de un plato inactivo.")
+
+    if fecha_movimiento is None:
+        fecha_movimiento = timezone.now()
+
+    receta = RecetaInsumo.objects.select_related("insumo").filter(plato=plato)
+
+    if not receta.exists():
+        raise MovimientoInventarioError("El plato no tiene receta definida.")
+
+    # 1) Validar stock suficiente para TODOS los insumos primero
+    requerimientos: dict[int, Decimal] = {}
+    for linea in receta:
+        cantidad_por_plato = linea.cantidad or Decimal("0")
+        if cantidad_por_plato <= 0:
+            continue
+        cantidad_total = (cantidad_por_plato * cantidad_platos).quantize(Decimal("0.0001"))
+        if cantidad_total <= 0:
+            continue
+        requerimientos[linea.insumo_id] = cantidad_total
+
+    if not requerimientos:
+        raise MovimientoInventarioError("La receta no tiene cantidades válidas para consumo.")
+
+    stocks = {
+        s.insumo_id: s
+        for s in StockInsumo.objects.select_for_update().filter(
+            almacen=almacen,
+            insumo_id__in=requerimientos.keys(),
+        )
+    }
+
+    # Validar stock
+    for insumo_id, cantidad_req in requerimientos.items():
+        stock = stocks.get(insumo_id)
+        cantidad_actual = stock.cantidad_actual if stock else Decimal("0")
+        if cantidad_actual < cantidad_req:
+            insumo = RecetaInsumo.objects.get(plato=plato, insumo_id=insumo_id).insumo
+            raise MovimientoInventarioError(
+                f"No hay stock suficiente de '{insumo.nombre}' "
+                f"en el almacén para consumir la receta. "
+                f"Requerido {cantidad_req}, disponible {cantidad_actual}."
+            )
+
+    # 2) Aplicar salidas y crear movimientos
+    movimientos: list[MovimientoInventario] = []
+    motivo_base = motivo or f"Consumo receta plato '{plato.nombre}'"
+    referencia_base = referencia or f"CONSUMO-{plato.id}-{fecha_movimiento.date().isoformat()}"
+
+    for idx, linea in enumerate(receta, start=1):
+        insumo = linea.insumo
+        cantidad_req = requerimientos.get(insumo.id)
+        if not cantidad_req:
+            continue
+
+        stock = stocks[insumo.id]
+        costo_unitario = stock.costo_promedio or Decimal("0")
+
+        # Actualizar stock
+        stock.cantidad_actual = (stock.cantidad_actual - cantidad_req).quantize(Decimal("0.0001"))
+        stock.save(update_fields=["cantidad_actual", "updated_at"])
+
+        # Crear movimiento
+        mov = MovimientoInventario.objects.create(
+            insumo=insumo,
+            almacen=almacen,
+            tipo=MovimientoInventario.TIPO_SALIDA_CONSUMO_RECETA,
+            cantidad=-cantidad_req,  # salida → negativa
+            costo_unitario=costo_unitario,
+            fecha_movimiento=fecha_movimiento,
+            motivo=f"{motivo_base} (L{idx})",
+            referencia=f"{referencia_base}-L{idx}",
+            usuario=usuario,
+        )
+        movimientos.append(mov)
+
+    return movimientos
+
+@transaction.atomic
+def registrar_merma(
+    *,
+    insumo: Insumo,
+    almacen: Almacen,
+    cantidad: Decimal,
+    usuario=None,
+    motivo: str,
+    referencia: str = "",
+    fecha_movimiento=None,
+) -> MovimientoInventario:
+    """
+    Registra una MERMA de inventario (pérdida, daño, vencimiento, etc.).
+
+    - La cantidad DEBE ser negativa (ej: -2.000).
+    - No permite dejar stock en negativo.
+    - Usa el costo_promedio actual del stock como costo_unitario.
+    """
+
+    if cantidad >= 0:
+        raise MovimientoInventarioError("La cantidad de una merma debe ser negativa (< 0).")
+
+    if not motivo or not motivo.strip():
+        raise MovimientoInventarioError("El motivo de la merma es obligatorio.")
+
+    if fecha_movimiento is None:
+        fecha_movimiento = timezone.now()
+
+    try:
+        stock = StockInsumo.objects.select_for_update().get(
+            insumo=insumo,
+            almacen=almacen,
+        )
+    except StockInsumo.DoesNotExist:
+        raise MovimientoInventarioError(
+            "No existe stock para este insumo en el almacén para registrar merma."
+        )
+
+    cantidad_actual = stock.cantidad_actual or Decimal("0")
+    nueva_cantidad = cantidad_actual + cantidad  # cantidad es negativa
+
+    if nueva_cantidad < 0:
+        raise MovimientoInventarioError(
+            f"No se puede registrar merma. Stock insuficiente. "
+            f"Actual: {cantidad_actual}, merma: {cantidad}."
+        )
+
+    stock.cantidad_actual = nueva_cantidad
+    stock.save(update_fields=["cantidad_actual", "updated_at"])
+
+    costo_unitario = stock.costo_promedio or Decimal("0")
+
+    movimiento = MovimientoInventario.objects.create(
+        insumo=insumo,
+        almacen=almacen,
+        tipo=MovimientoInventario.TIPO_SALIDA_MERMA,
+        cantidad=cantidad,  # negativa
+        costo_unitario=costo_unitario,
+        fecha_movimiento=fecha_movimiento,
+        motivo=motivo,
+        referencia=referencia,
+        usuario=usuario,
+    )
+
+    return movimiento
+
+
+

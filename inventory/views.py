@@ -22,6 +22,12 @@ from .serializers import (
     StockInsumoSerializer,
     PlatoSerializer,
     RecetaInsumoSerializer,
+    ConteoInventarioRequestSerializer,
+    ResultadoConteoSerializer,
+)
+from .services.inventory import (
+    calcular_costo_receta,
+    aplicar_ajustes_conteo,
 )
 
 
@@ -111,3 +117,85 @@ class RecetaInsumoViewSet(viewsets.ModelViewSet):
     queryset = RecetaInsumo.objects.all().select_related("plato", "insumo", "insumo__unidad")
     serializer_class = RecetaInsumoSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
+
+class AlmacenViewSet(viewsets.ModelViewSet):
+    queryset = Almacen.objects.all()
+    serializer_class = AlmacenSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    @action(detail=True, methods=["post"], url_path="conteo/previsualizar")
+    def previsualizar_conteo(self, request, pk=None):
+        """
+        Recibe un conteo físico y devuelve diferencias vs sistema SIN aplicar ajustes.
+        POST /api/almacenes/<id>/conteo/previsualizar/
+        """
+        almacen = self.get_object()
+        serializer = ConteoInventarioRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+        conteos = data["conteos"]
+        tolerancia_unidades = data.get("tolerancia_unidades")
+        tolerancia_porcentaje = data.get("tolerancia_porcentaje")
+
+        resultados = calcular_diferencias_conteo(
+            almacen=almacen,
+            conteos=conteos,
+            tolerancia_unidades=tolerancia_unidades,
+            tolerancia_porcentaje=tolerancia_porcentaje,
+        )
+
+        # Serializamos la lista de resultados
+        output = [ResultadoConteoSerializer.from_resultado(r).data for r in resultados]
+        return Response({"almacen": almacen.id, "resultados": output})
+
+    @action(detail=True, methods=["post"], url_path="conteo/aplicar")
+    def aplicar_conteo(self, request, pk=None):
+        """
+        Recibe un conteo físico, calcula diferencias y APLICA ajustes donde corresponda.
+        POST /api/almacenes/<id>/conteo/aplicar/
+        """
+        almacen = self.get_object()
+        serializer = ConteoInventarioRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+        conteos = data["conteos"]
+        tolerancia_unidades = data.get("tolerancia_unidades")
+        tolerancia_porcentaje = data.get("tolerancia_porcentaje")
+        aplicar_solo_fuera_tolerancia = data.get("aplicar_solo_fuera_tolerancia", True)
+
+        resultados, movimientos = aplicar_ajustes_conteo(
+            almacen=almacen,
+            conteos=conteos,
+            usuario=request.user if request.user.is_authenticated else None,
+            tolerancia_unidades=tolerancia_unidades,
+            tolerancia_porcentaje=tolerancia_porcentaje,
+            referencia=f"CONTEO-{almacen.id}",
+            aplicar_solo_fuera_tolerancia=aplicar_solo_fuera_tolerancia,
+        )
+
+        resultados_serializados = [
+            ResultadoConteoSerializer.from_resultado(r).data for r in resultados
+        ]
+
+        movimientos_data = [
+            {
+                "id": mov.id,
+                "insumo_id": mov.insumo_id,
+                "almacen_id": mov.almacen_id,
+                "tipo": mov.tipo,
+                "cantidad": str(mov.cantidad),
+                "fecha_movimiento": mov.fecha_movimiento,
+            }
+            for mov in movimientos
+        ]
+
+        return Response(
+            {
+                "almacen": almacen.id,
+                "resultados": resultados_serializados,
+                "movimientos_generados": movimientos_data,
+            }
+        )
+
