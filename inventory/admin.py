@@ -12,6 +12,8 @@ from .models import (
     RecetaInsumo,
     LoteInsumo,
     MovimientoInventario,
+    CategoriaPlato,
+    Plato,
 )
 
 @admin.register(LoteInsumo)
@@ -122,6 +124,7 @@ class PlatoAdmin(admin.ModelAdmin):
     list_display = ("nombre", "categoria", "precio_venta", "activo")
     list_filter = ("activo", "categoria")
     search_fields = ("nombre", "descripcion")
+    autocomplete_fields = ("categoria",)
 
 
 @admin.register(RecetaInsumo)
@@ -187,3 +190,10 @@ class MovimientoInventarioAdmin(admin.ModelAdmin):
             )
         }),
     )
+
+@admin.register(CategoriaPlato)
+class CategoriaPlatoAdmin(admin.ModelAdmin):
+    list_display = ("nombre", )
+    search_fields = ("nombre", )
+
+

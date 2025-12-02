@@ -237,6 +237,8 @@ class PlatoSerializer(serializers.ModelSerializer):
             "margen_bruto_porcentaje",
             "created_at",
             "updated_at",
+            "categoria",
+            "categoria_detalle",
         ]
         read_only_fields = [
             "id",

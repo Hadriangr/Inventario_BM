@@ -285,10 +285,13 @@ class Plato(TimeStampedModel):
         decimal_places=2,
         help_text="Precio de venta al público.",
     )
-    categoria = models.CharField(
-        max_length=100,
+    categoria = models.ForeignKey(
+        "CategoriaPlato",
+        on_delete=models.SET_NULL,
+        null=True,
         blank=True,
-        help_text="Ej: entrada, principal, postre...",
+        related_name="platos",
+        help_text="Tipo de plato (ej: entrada, principal, postre, menú ejecutivo).",
     )
     activo = models.BooleanField(default=True)
 
@@ -568,3 +571,14 @@ class LoteInsumo(TimeStampedModel):
         limite = hoy.fromordinal(hoy.toordinal() + dias)
         return hoy <= self.fecha_vencimiento <= limite
 
+class CategoriaPlato(TimeStampedModel):
+    nombre = models.CharField(max_length=100, unique=True)
+    descripcion = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = "Categoría de plato"
+        verbose_name_plural = "Categorías de plato"
+        ordering = ["nombre"]
+
+    def __str__(self):
+        return self.nombre
