@@ -5,6 +5,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from django.utils import timezone
 
 User = get_user_model()
 
@@ -306,6 +307,7 @@ class Plato(TimeStampedModel):
 
     def __str__(self):
         return self.nombre
+    
     @property
     def food_cost_porcentaje(self) -> Decimal | None:
         """
@@ -582,3 +584,110 @@ class CategoriaPlato(TimeStampedModel):
 
     def __str__(self):
         return self.nombre
+
+
+class EntradaCompra(TimeStampedModel):
+    """
+    Documento de compra simple (una línea = un insumo).
+    Al guardarse y procesarse, genera la entrada de inventario
+    usando registrar_entrada_compra.
+    """
+
+    proveedor = models.ForeignKey(
+        Proveedor,
+        on_delete=models.PROTECT,
+        related_name="entradas_compra",
+    )
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.PROTECT,
+        related_name="entradas_compra",
+    )
+    insumo = models.ForeignKey(
+        Insumo,
+        on_delete=models.PROTECT,
+        related_name="entradas_compra",
+    )
+
+    fecha_documento = models.DateField(
+        help_text="Fecha de la factura / guía de compra.",
+    )
+    numero_documento = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Número de factura/boleta/guía.",
+    )
+
+    cantidad = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        help_text="Cantidad comprada en unidad de consumo del insumo.",
+    )
+    costo_unitario = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        help_text="Costo unitario en moneda local (por unidad de consumo).",
+    )
+
+    referencia = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Referencia interna opcional (OC, nota, etc.).",
+    )
+    observaciones = models.TextField(blank=True)
+
+    # Control de procesamiento
+    procesada = models.BooleanField(
+        default=False,
+        editable=False,
+        help_text="Indica si ya se generó la entrada de inventario.",
+    )
+    movimiento = models.ForeignKey(
+        "MovimientoInventario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="entradas_compra",
+        editable=False,
+    )
+
+    class Meta:
+        verbose_name = "Entrada de compra"
+        verbose_name_plural = "Entradas de compra"
+        ordering = ["-fecha_documento", "-created_at"]
+
+    def __str__(self):
+        return f"Compra {self.id} - {self.proveedor} - {self.insumo}"
+
+    def procesar(self, usuario=None, fecha_movimiento=None):
+        """
+        Genera la entrada de inventario (si aún no está procesada)
+        usando el servicio registrar_entrada_compra.
+        """
+        from inventory.services.inventory import registrar_entrada_compra
+
+        if self.procesada:
+            return self.movimiento
+
+        if fecha_movimiento is None:
+            fecha_movimiento = timezone.now()
+
+        motivo = self.observaciones or f"Compra de {self.insumo.nombre}"
+        referencia = self.referencia or self.numero_documento or f"COMP-{self.pk}"
+
+        mov = registrar_entrada_compra(
+            insumo=self.insumo,
+            almacen=self.almacen,
+            cantidad=self.cantidad,
+            costo_unitario=self.costo_unitario,
+            usuario=usuario,
+            motivo=motivo,
+            referencia=referencia,
+            fecha_movimiento=fecha_movimiento,
+        )
+
+        self.movimiento = mov
+        self.procesada = True
+        self.save(update_fields=["movimiento", "procesada", "updated_at"])
+
+        return mov

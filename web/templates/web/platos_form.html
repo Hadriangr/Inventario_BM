@@ -1,0 +1,46 @@
+{% extends "web/base.html" %}
+
+{% block title %}{{ view.object|default:'Nuevo plato' }}{% endblock %}
+
+{% block content %}
+
+<h1>{% if view.object %}Editar plato{% else %}Nuevo plato{% endif %}</h1>
+
+<form method="post">
+    {% csrf_token %}
+
+    <div class="mb-3">
+        <label class="form-label">Nombre</label>
+        {{ form.nombre }}
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Descripción</label>
+        {{ form.descripcion }}
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Precio de venta</label>
+        {{ form.precio_venta }}
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Costo de receta</label>
+        {{ form.precio_venta }}
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Categoría</label>
+        {{ form.categoria }}
+    </div>
+
+    <div class="form-check mb-3">
+        {{ form.activo }}
+        <label class="form-check-label">Activo</label>
+    </div>
+
+    <button class="btn btn-primary">Guardar</button>
+    <a href="{% url 'web:platos_list' %}" class="btn btn-secondary">Cancelar</a>
+</form>
+
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "web/base.html" %}
+{% block title %}Platos{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Platos</h1>
+    <a href="{% url 'web:platos_create' %}" class="btn btn-primary">+ Nuevo plato</a>
+</div>
+
+<form method="get" class="row mb-3">
+    <div class="col-sm-4">
+        <input type="text" name="q" value="{{ request.GET.q }}" class="form-control"
+               placeholder="Buscar plato...">
+    </div>
+    <div class="col-sm-2">
+        <button class="btn btn-outline-secondary">Buscar</button>
+    </div>
+</form>
+
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th>Nombre</th>
+            <th>Categoría</th>
+            <th>Precio</th>
+            <th>Costo receta</th>
+            <th>Food cost %</th>
+            <th>Margen %</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for plato in platos %}
+        <tr>
+            <td>{{ plato.nombre }}</td>
+            <td>{{ plato.categoria }}</td>
+            <td>{{ plato.precio_venta }}</td>
+            <td>{{ plato.costo_receta }}</td>
+            <td>{{ plato.food_cost_porcentaje|floatformat:2 }}%</td>
+            <td>{{ plato.margen_bruto_porcentaje|floatformat:2 }}%</td>
+            <td class="text-end">
+                <a href="{% url 'web:platos_update' plato.pk %}" class="btn btn-sm btn-outline-primary">
+                    Editar
+                </a>
+                <a href="{% url 'web:platos_receta' plato.pk %}" class="btn btn-sm btn-outline-success">
+                    Receta
+                </a>
+                <a href="{% url 'web:platos_recalcular' plato.pk %}"
+                class="btn btn-sm btn-outline-warning"
+                onclick="return confirm('¿Recalcular costo de receta?')">
+                    Recalcular costo
+                </a>
+                <form action="{% url 'web:platos_delete' plato.pk %}" method="post" style="display:inline">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="btn btn-sm btn-outline-danger"
+                            onclick="return confirm('¿Seguro que quieres eliminar este plato?')">
+                        Eliminar
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}

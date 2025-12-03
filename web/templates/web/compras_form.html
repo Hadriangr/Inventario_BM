@@ -1,0 +1,87 @@
+{% extends "web/base.html" %}
+
+{% block title %}Nueva compra{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">Nueva entrada de compra</h1>
+
+<form method="post" novalidate>
+    {% csrf_token %}
+
+    <div class="row">
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Proveedor</label>
+            {{ form.proveedor }}
+            {% if form.proveedor.errors %}
+                <div class="text-danger small">{{ form.proveedor.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Almacén</label>
+            {{ form.almacen }}
+            {% if form.almacen.errors %}
+                <div class="text-danger small">{{ form.almacen.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Insumo</label>
+            {{ form.insumo }}
+            {% if form.insumo.errors %}
+                <div class="text-danger small">{{ form.insumo.errors }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Fecha documento</label>
+            {{ form.fecha_documento }}
+            {% if form.fecha_documento.errors %}
+                <div class="text-danger small">{{ form.fecha_documento.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Número documento</label>
+            {{ form.numero_documento }}
+            {% if form.numero_documento.errors %}
+                <div class="text-danger small">{{ form.numero_documento.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Referencia interna</label>
+            {{ form.referencia }}
+            {% if form.referencia.errors %}
+                <div class="text-danger small">{{ form.referencia.errors }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Cantidad</label>
+            {{ form.cantidad }}
+            {% if form.cantidad.errors %}
+                <div class="text-danger small">{{ form.cantidad.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Costo unitario</label>
+            {{ form.costo_unitario }}
+            {% if form.costo_unitario.errors %}
+                <div class="text-danger small">{{ form.costo_unitario.errors }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Observaciones</label>
+        {{ form.observaciones }}
+        {% if form.observaciones.errors %}
+            <div class="text-danger small">{{ form.observaciones.errors }}</div>
+        {% endif %}
+    </div>
+
+    <button type="submit" class="btn btn-primary">Guardar compra</button>
+    <a href="{% url 'web:compras_list' %}" class="btn btn-secondary">Cancelar</a>
+</form>
+{% endblock %}

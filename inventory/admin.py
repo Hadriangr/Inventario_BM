@@ -14,7 +14,10 @@ from .models import (
     MovimientoInventario,
     CategoriaPlato,
     Plato,
+    EntradaCompra,
 )
+admin.site.site_header = "Administración de Inventario BM"
+admin.site.site_title = "Inventario BM"
 
 @admin.register(LoteInsumo)
 class LoteInsumoAdmin(admin.ModelAdmin):
@@ -196,4 +199,37 @@ class CategoriaPlatoAdmin(admin.ModelAdmin):
     list_display = ("nombre", )
     search_fields = ("nombre", )
 
+class EntradaCompraAdminForm(forms.ModelForm):
+    class Meta:
+        model = EntradaCompra
+        fields = "__all__"
+        labels = {
+            "costo_unitario": "Costo unitario (unidad de consumo)",
+        }
+
+@admin.register(EntradaCompra)
+class EntradaCompraAdmin(admin.ModelAdmin):
+    form = EntradaCompraAdminForm
+
+    list_display = (
+        "id",
+        "fecha_documento",
+        "proveedor",
+        "almacen",
+        "insumo",
+        "cantidad",
+        "costo_unitario",
+        "procesada",
+    )
+    list_filter = ("proveedor", "almacen", "procesada", "fecha_documento")
+    search_fields = ("numero_documento", "referencia", "observaciones")
+    autocomplete_fields = ("proveedor", "almacen", "insumo")
+    readonly_fields = ("procesada", "movimiento", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change):
+        # Primero guardamos la compra en la BD
+        super().save_model(request, obj, form, change)
+        # Luego, si aún no está procesada, generamos la entrada de inventario
+        if not obj.procesada:
+            obj.procesar(usuario=request.user)
 

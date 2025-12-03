@@ -1,0 +1,61 @@
+{% extends "web/base.html" %}
+
+{% block title %}Receta - {{ plato.nombre }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">Receta de {{ plato.nombre }}</h1>
+
+<p>
+  Precio de venta: <strong>{{ plato.precio_venta }}</strong><br>
+  Costo receta actual: <strong>{{ plato.costo_receta }}</strong><br>
+  Food cost: <strong>{{ plato.food_cost_porcentaje|floatformat:2 }}%</strong><br>
+  Margen: <strong>{{ plato.margen_bruto_porcentaje|floatformat:2 }}%</strong>
+</p>
+
+<form method="post">
+    {% csrf_token %}
+    {{ formset.management_form }}
+
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Insumo</th>
+                <th style="width: 150px;">Cantidad por plato</th>
+                <th style="width: 80px;">Eliminar</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for form in formset %}
+            <tr>
+                <td>
+                    {{ form.insumo }}
+                    {% if form.insumo.errors %}
+                        <div class="text-danger small">{{ form.insumo.errors }}</div>
+                    {% endif %}
+                </td>
+                <td>
+                    {{ form.cantidad }}
+                    {% if form.cantidad.errors %}
+                        <div class="text-danger small">{{ form.cantidad.errors }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    {% if form.instance.pk %}
+                        {{ form.DELETE }}
+                    {% else %}
+                        <!-- para filas nuevas, el checkbox no tiene mucho sentido -->
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <p class="text-muted">
+      Puedes usar las filas vacías para agregar nuevos insumos a la receta.
+    </p>
+
+    <button type="submit" class="btn btn-primary">Guardar receta</button>
+    <a href="{% url 'web:platos_list' %}" class="btn btn-secondary">Volver a lista de platos</a>
+</form>
+{% endblock %}

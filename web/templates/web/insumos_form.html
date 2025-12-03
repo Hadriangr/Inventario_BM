@@ -1,0 +1,90 @@
+{% extends "web/base.html" %}
+
+{% block title %}{% if view.object %}Editar insumo{% else %}Nuevo insumo{% endif %}{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">
+    {% if view.object %}Editar insumo{% else %}Nuevo insumo{% endif %}
+</h1>
+
+<form method="post" novalidate>
+    {% csrf_token %}
+
+    <div class="mb-3">
+        <label class="form-label">Nombre</label>
+        {{ form.nombre }}
+        {% if form.nombre.errors %}
+            <div class="text-danger small">{{ form.nombre.errors }}</div>
+        {% endif %}
+    </div>
+
+    <div class="row">
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Unidad de consumo</label>
+            {{ form.unidad }}
+            {% if form.unidad.errors %}
+                <div class="text-danger small">{{ form.unidad.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Unidad de compra</label>
+            {{ form.unidad_compra }}
+            {% if form.unidad_compra.errors %}
+                <div class="text-danger small">{{ form.unidad_compra.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-4">
+            <label class="form-label">Factor de conversión</label>
+            {{ form.factor_conversion }}
+            <div class="form-text">
+                Cantidad de unidad de consumo en 1 unidad de compra.
+            </div>
+            {% if form.factor_conversion.errors %}
+                <div class="text-danger small">{{ form.factor_conversion.errors }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="mb-3 col-md-6">
+            <label class="form-label">Categoría</label>
+            {{ form.categoria }}
+            {% if form.categoria.errors %}
+                <div class="text-danger small">{{ form.categoria.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-6">
+            <label class="form-label">Proveedor principal</label>
+            {{ form.proveedor_principal }}
+            {% if form.proveedor_principal.errors %}
+                <div class="text-danger small">{{ form.proveedor_principal.errors }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="mb-3 col-md-6">
+            <label class="form-label">Stock mínimo</label>
+            {{ form.stock_minimo }}
+            {% if form.stock_minimo.errors %}
+                <div class="text-danger small">{{ form.stock_minimo.errors }}</div>
+            {% endif %}
+        </div>
+        <div class="mb-3 col-md-6">
+            <label class="form-label">Stock máximo</label>
+            {{ form.stock_maximo }}
+            {% if form.stock_maximo.errors %}
+                <div class="text-danger small">{{ form.stock_maximo.errors }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="form-check mb-3">
+        {{ form.activo }}
+        <label class="form-check-label">Activo</label>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Guardar</button>
+    <a href="{% url 'web:insumos_list' %}" class="btn btn-secondary">Cancelar</a>
+</form>
+{% endblock %}

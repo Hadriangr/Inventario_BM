@@ -1,0 +1,52 @@
+{% extends "web/base.html" %}
+
+{% block title %}{{ view.object|default:"Nuevo proveedor" }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">
+    {% if view.object %}Editar proveedor{% else %}Nuevo proveedor{% endif %}
+</h1>
+
+<form method="post" novalidate>
+    {% csrf_token %}
+    <div class="mb-3">
+        <label class="form-label">Nombre</label>
+        {{ form.nombre }}
+        {% if form.nombre.errors %}
+            <div class="text-danger small">{{ form.nombre.errors }}</div>
+        {% endif %}
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Contacto</label>
+        {{ form.contacto }}
+        {% if form.contacto.errors %}
+            <div class="text-danger small">{{ form.contacto.errors }}</div>
+        {% endif %}
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Teléfono</label>
+        {{ form.telefono }}
+        {% if form.telefono.errors %}
+            <div class="text-danger small">{{ form.telefono.errors }}</div>
+        {% endif %}
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Email</label>
+        {{ form.email }}
+        {% if form.email.errors %}
+            <div class="text-danger small">{{ form.email.errors }}</div>
+        {% endif %}
+    </div>
+
+    <div class="form-check mb-3">
+        {{ form.activo }}
+        <label class="form-check-label">Activo</label>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Guardar</button>
+    <a href="{% url 'web:proveedores_list' %}" class="btn btn-secondary">Cancelar</a>
+</form>
+{% endblock %}
