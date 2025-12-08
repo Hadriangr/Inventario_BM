@@ -1,7 +1,7 @@
 
 from django import forms
-from inventory.models import Proveedor, Insumo,EntradaCompra,Plato, RecetaInsumo
-from django.forms import inlineformset_factory
+from inventory.models import Proveedor, Insumo,EntradaCompra,Plato, RecetaInsumo,MenuPlan,MenuPlanItem,CategoriaInsumo
+from django.forms import inlineformset_factory, BaseInlineFormSet
 
 
 class ProveedorForm(forms.ModelForm):
@@ -49,6 +49,8 @@ class EntradaCompraForm(forms.ModelForm):
             "insumo",
             "fecha_documento",
             "numero_documento",
+            "numero_lote",
+            "fecha_vencimiento",
             "cantidad",
             "costo_unitario",
             "referencia",
@@ -61,6 +63,8 @@ class EntradaCompraForm(forms.ModelForm):
             "fecha_documento": forms.DateInput(
                 attrs={"type": "date", "class": "form-control"}
             ),
+            "numero_lote": forms.TextInput(attrs={"class": "form-control"}),
+            "fecha_vencimiento": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
             "numero_documento": forms.TextInput(attrs={"class": "form-control"}),
             "cantidad": forms.NumberInput(attrs={"class": "form-control", "step": "0.001"}),
             "costo_unitario": forms.NumberInput(attrs={"class": "form-control", "step": "0.0001"}),
@@ -103,4 +107,39 @@ RecetaInsumoFormSet = inlineformset_factory(
     form=RecetaInsumoForm,
     extra=3,          
     can_delete=True, 
+)
+
+class MenuPlanForm(forms.ModelForm):
+    class Meta:
+        model = MenuPlan
+        fields = ["nombre", "fecha_inicio", "fecha_fin", "almacen", "estado", "notas"]
+        widgets = {
+            "nombre": forms.TextInput(attrs={"class": "form-control"}),
+            "fecha_inicio": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "fecha_fin": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "almacen": forms.Select(attrs={"class": "form-select"}),
+            "estado": forms.Select(attrs={"class": "form-select"}),
+            "notas": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+        }
+
+
+class MenuPlanItemForm(forms.ModelForm):
+    class Meta:
+        model = MenuPlanItem
+        fields = ["fecha", "categoria_plato", "plato", "porciones_planificadas", "notas"]
+        widgets = {
+            "fecha": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "categoria_plato": forms.Select(attrs={"class": "form-select"}),
+            "plato": forms.Select(attrs={"class": "form-select"}),
+            "porciones_planificadas": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "notas": forms.TextInput(attrs={"class": "form-control"}),
+        }
+
+
+MenuPlanItemFormSet = inlineformset_factory(
+    MenuPlan,
+    MenuPlanItem,
+    form=MenuPlanItemForm,
+    extra=3,          # filas vacías para agregar nuevos ítems
+    can_delete=True,  # permite marcar líneas para eliminar
 )

@@ -618,6 +618,19 @@ class EntradaCompra(TimeStampedModel):
         help_text="Número de factura/boleta/guía.",
     )
 
+    numero_lote = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Número de lote del proveedor"
+    )
+
+    fecha_vencimiento = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Fecha de vencimiento declarada para este lote"
+    )
+
     cantidad = models.DecimalField(
         max_digits=12,
         decimal_places=3,
@@ -684,6 +697,8 @@ class EntradaCompra(TimeStampedModel):
             motivo=motivo,
             referencia=referencia,
             fecha_movimiento=fecha_movimiento,
+            numero_lote=self.numero_lote,
+            fecha_vencimiento=self.fecha_vencimiento,
         )
 
         self.movimiento = mov
@@ -691,3 +706,85 @@ class EntradaCompra(TimeStampedModel):
         self.save(update_fields=["movimiento", "procesada", "updated_at"])
 
         return mov
+
+
+class MenuPlan(TimeStampedModel):
+    """
+    Representa un plan de menú para un rango de fechas (ej: 2 semanas).
+    Puede ser por sede/almacén.
+    """
+
+    ESTADO_CHOICES = [
+        ("borrador", "Borrador"),
+        ("confirmado", "Confirmado"),
+    ]
+
+    nombre = models.CharField(max_length=200)
+    fecha_inicio = models.DateField()
+    fecha_fin = models.DateField()
+
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.PROTECT,
+        related_name="planes_menu",
+        null=True,
+        blank=True,
+        help_text="Almacén o sede para el cual se planifica el menú.",
+    )
+
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADO_CHOICES,
+        default="borrador",
+    )
+
+    notas = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-fecha_inicio", "-id"]
+
+    def __str__(self):
+        return f"{self.nombre} ({self.fecha_inicio} → {self.fecha_fin})"
+
+
+class MenuPlanItem(TimeStampedModel):
+    """
+    Línea del plan: un plato programado en una fecha + servicio del día.
+    """
+    plan = models.ForeignKey(
+        MenuPlan,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+
+    fecha = models.DateField()
+
+    categoria_plato = models.ForeignKey(
+        CategoriaPlato,
+        on_delete=models.PROTECT,
+        related_name="items_menu",
+        help_text="Categoría del plato en este plan (ej: Principal, Ensalada, Postre).",
+    )
+
+    plato = models.ForeignKey(
+        Plato,
+        on_delete=models.PROTECT,
+        related_name="planes_menu",
+    )
+
+    porciones_planificadas = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text="Número de platos estimados para este día/servicio.",
+    )
+
+    notas = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["fecha", "plato__nombre"]
+
+    def __str__(self):
+        return (
+            f"{self.fecha} - {self.categoria_plato} - "
+            f"{self.plato} ({self.porciones_planificadas} porciones)"
+        )

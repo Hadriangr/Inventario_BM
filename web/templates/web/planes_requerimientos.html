@@ -1,0 +1,60 @@
+{% extends "web/base.html" %}
+
+{% block title %}Requerimientos - {{ plan.nombre }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">Requerimientos para: {{ plan.nombre }}</h1>
+
+<p>
+    Rango: <strong>{{ plan.fecha_inicio }} → {{ plan.fecha_fin }}</strong><br>
+    {% if almacen %}
+        Almacén: <strong>{{ almacen.nombre }}</strong><br>
+    {% else %}
+        <span class="text-warning">Este plan no tiene almacén asociado, se muestra solo lo necesario (sin stock).</span><br>
+    {% endif %}
+    Estado: <strong>{{ plan.get_estado_display }}</strong>
+</p>
+
+<a href="{% url 'web:planes_list' %}" class="btn btn-secondary mb-3">Volver a planes</a>
+
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th>Insumo</th>
+            <th>Unidad</th>
+            <th class="text-end">Cantidad necesaria</th>
+            {% if almacen %}
+                <th class="text-end">Stock disponible</th>
+                <th class="text-end">Faltante</th>
+            {% endif %}
+        </tr>
+    </thead>
+    <tbody>
+    {% for r in requerimientos %}
+        <tr>
+            <td>{{ r.insumo.nombre }}</td>
+            <td>{{ r.unidad.abreviatura }}</td>
+            <td class="text-end">{{ r.cantidad_necesaria }}</td>
+            {% if almacen %}
+                <td class="text-end">
+                    {{ r.stock_disponible|default:"0" }}
+                </td>
+                <td class="text-end">
+                    {% if r.faltante > 0 %}
+                        <span class="text-danger fw-bold">{{ r.faltante }}</span>
+                    {% else %}
+                        <span class="text-success">0</span>
+                    {% endif %}
+                </td>
+            {% endif %}
+        </tr>
+    {% empty %}
+        <tr>
+            <td colspan="{% if almacen %}5{% else %}3{% endif %}" class="text-center">
+                No se encontraron requerimientos (¿el plan tiene platos con receta?).
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -647,10 +647,15 @@ def registrar_consumo_receta(
         cantidad_total = cantidad_por_plato * cantidad_platos
     - Verifica que haya stock suficiente en el almacén.
     - Descuenta stock en StockInsumo.
+    - SI EXISTEN LOTES para ese insumo+almacén:
+        descuenta primero por FEFO (First Expire, First Out) en LoteInsumo,
+        sin usar lotes vencidos.
     - Crea un MovimientoInventario SALIDA_CONSUMO_RECETA por insumo,
       con costo_unitario igual al costo_promedio actual del stock.
 
-    NOTA: versión MVP sin manejo por lotes (usa solo StockInsumo).
+    NOTA:
+        - Si no existen lotes para un insumo, se hace fallback al comportamiento
+          anterior (solo StockInsumo).
     """
 
     if cantidad_platos <= 0:
@@ -689,7 +694,7 @@ def registrar_consumo_receta(
         )
     }
 
-    # Validar stock
+    # Validar stock agregado (StockInsumo)
     for insumo_id, cantidad_req in requerimientos.items():
         stock = stocks.get(insumo_id)
         cantidad_actual = stock.cantidad_actual if stock else Decimal("0")
@@ -701,10 +706,11 @@ def registrar_consumo_receta(
                 f"Requerido {cantidad_req}, disponible {cantidad_actual}."
             )
 
-    # 2) Aplicar salidas y crear movimientos
+    # 2) Aplicar salidas FEFO + movimientos
     movimientos: list[MovimientoInventario] = []
     motivo_base = motivo or f"Consumo receta plato '{plato.nombre}'"
     referencia_base = referencia or f"CONSUMO-{plato.id}-{fecha_movimiento.date().isoformat()}"
+    hoy = date.today()
 
     for idx, linea in enumerate(receta, start=1):
         insumo = linea.insumo
@@ -715,11 +721,52 @@ def registrar_consumo_receta(
         stock = stocks[insumo.id]
         costo_unitario = stock.costo_promedio or Decimal("0")
 
-        # Actualizar stock
+        # ---- FEFO por lote (si existen lotes) ----
+        lotes_qs = (
+            LoteInsumo.objects.select_for_update()
+            .filter(
+                insumo=insumo,
+                almacen=almacen,
+                cantidad_actual__gt=0,
+            )
+            .order_by("fecha_vencimiento", "id")
+        )
+
+        cantidad_restante = cantidad_req
+
+        if lotes_qs.exists():
+            for lote in lotes_qs:
+                # Si tiene fecha de vencimiento y está vencido, no lo usamos
+                if lote.fecha_vencimiento and lote.fecha_vencimiento < hoy:
+                    continue
+
+                if cantidad_restante <= 0:
+                    break
+
+                disponible = lote.cantidad_actual or Decimal("0")
+                if disponible <= 0:
+                    continue
+
+                a_consumir = min(disponible, cantidad_restante)
+                lote.cantidad_actual = (disponible - a_consumir).quantize(Decimal("0.0001"))
+                lote.save(update_fields=["cantidad_actual", "updated_at"])
+                cantidad_restante -= a_consumir
+
+            # Si había lotes y no alcanzó con lotes NO vencidos → error
+            if cantidad_restante > 0:
+                raise MovimientoInventarioError(
+                    f"No hay suficiente stock por lote (FEFO) para '{insumo.nombre}' "
+                    f"en el almacén {almacen.nombre}. "
+                    f"Faltan {cantidad_restante} unidades no vencidas."
+                )
+        # Si NO hay lotes para este insumo+almacén, hacemos fallback:
+        # solo descontamos de StockInsumo como antes.
+
+        # ---- Actualizar stock agregado ----
         stock.cantidad_actual = (stock.cantidad_actual - cantidad_req).quantize(Decimal("0.0001"))
         stock.save(update_fields=["cantidad_actual", "updated_at"])
 
-        # Crear movimiento
+        # ---- Crear movimiento ----
         mov = MovimientoInventario.objects.create(
             insumo=insumo,
             almacen=almacen,
@@ -734,6 +781,7 @@ def registrar_consumo_receta(
         movimientos.append(mov)
 
     return movimientos
+
 
 @transaction.atomic
 def registrar_merma(
@@ -752,6 +800,8 @@ def registrar_merma(
     - La cantidad DEBE ser negativa (ej: -2.000).
     - No permite dejar stock en negativo.
     - Usa el costo_promedio actual del stock como costo_unitario.
+    - Si existen lotes para este insumo+almacén, descuenta por FEFO
+      (First Expire, First Out) en LoteInsumo.
     """
 
     if cantidad >= 0:
@@ -782,6 +832,51 @@ def registrar_merma(
             f"Actual: {cantidad_actual}, merma: {cantidad}."
         )
 
+    # ---- FEFO por lote (si existen lotes) ----
+    cantidad_a_mermar = (-cantidad).quantize(Decimal("0.0001"))  # cantidad positiva
+    hoy = date.today()
+
+    lotes_qs = (
+        LoteInsumo.objects.select_for_update()
+        .filter(
+            insumo=insumo,
+            almacen=almacen,
+            cantidad_actual__gt=0,
+        )
+        .order_by("fecha_vencimiento", "id")
+    )
+
+    cantidad_restante = cantidad_a_mermar
+
+    if lotes_qs.exists():
+        for lote in lotes_qs:
+            # Si tiene fecha de vencimiento y está vencido, no lo usamos para merma “operativa”
+            # (si estás registrando merma por vencimiento, idealmente el motivo ya refleja eso,
+            # pero igual evitamos usar lotes ya vencidos en FEFO normal).
+            if lote.fecha_vencimiento and lote.fecha_vencimiento < hoy:
+                continue
+
+            if cantidad_restante <= 0:
+                break
+
+            disponible = lote.cantidad_actual or Decimal("0")
+            if disponible <= 0:
+                continue
+
+            a_consumir = min(disponible, cantidad_restante)
+            lote.cantidad_actual = (disponible - a_consumir).quantize(Decimal("0.0001"))
+            lote.save(update_fields=["cantidad_actual", "updated_at"])
+            cantidad_restante -= a_consumir
+
+        # Si había lotes y no alcanzó con lotes no vencidos → error
+        if cantidad_restante > 0:
+            raise MovimientoInventarioError(
+                f"No hay suficiente stock por lote (FEFO) para registrar merma de '{insumo.nombre}' "
+                f"en el almacén {almacen.nombre}. Faltan {cantidad_restante} unidades."
+            )
+    # Si no hay lotes, se hace fallback: solo ajustamos StockInsumo (como antes).
+
+    # ---- Actualizar stock agregado ----
     stock.cantidad_actual = nueva_cantidad
     stock.save(update_fields=["cantidad_actual", "updated_at"])
 
@@ -803,3 +898,53 @@ def registrar_merma(
 
 
 
+def _consumir_por_fefo(*, insumo, almacen, cantidad: Decimal):
+    """
+    Descuenta 'cantidad' de los lotes (LoteInsumo) de un insumo en un almacén,
+    siguiendo FEFO (First Expire, First Out).
+
+    - Solo considera lotes con cantidad_actual > 0.
+    - No consume de lotes vencidos (fecha_vencimiento < hoy).
+    - Si no hay suficientes lotes no vencidos para cubrir la cantidad, lanza MovimientoInventarioError.
+    - Si NO hay lotes para este insumo+almacén, no hace nada (el caller puede hacer fallback).
+    """
+    hoy = date.today()
+
+    # Bloqueamos filas para evitar condiciones de carrera
+    lotes_qs = (
+        LoteInsumo.objects.select_for_update()
+        .filter(insumo=insumo, almacen=almacen, cantidad_actual__gt=0)
+        .order_by("fecha_vencimiento", "id")
+    )
+
+    if not lotes_qs.exists():
+        # No hay lotes -> que el caller decida si hace fallback
+        return False
+
+    restante = cantidad
+
+    for lote in lotes_qs:
+        # Si tiene fecha de vencimiento y ya está vencido, lo saltamos
+        if lote.fecha_vencimiento and lote.fecha_vencimiento < hoy:
+            continue
+
+        if restante <= 0:
+            break
+
+        disponible = lote.cantidad_actual
+        if disponible <= 0:
+            continue
+
+        a_consumir = min(restante, disponible)
+        lote.cantidad_actual = disponible - a_consumir
+        lote.save(update_fields=["cantidad_actual"])
+        restante -= a_consumir
+
+    if restante > 0:
+        # No alcanzó con lotes no vencidos -> revertimos esta lógica
+        # (al estar en una transacción atómica, se hará rollback)
+        raise MovimientoInventarioError(
+            f"No hay suficiente stock por lote (FEFO) para {insumo.nombre} en {almacen.nombre}."
+        )
+
+    return True  # se consumió totalmente desde lotes

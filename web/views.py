@@ -1,12 +1,13 @@
 from django.shortcuts import render
 from django.urls import reverse_lazy
-from django.views.generic import ListView, CreateView, UpdateView,DeleteView
+from django.views.generic import ListView, CreateView, UpdateView,DeleteView, DetailView
 from decimal import Decimal
 from django.db.models import Q, Sum
-from inventory.models import Proveedor, Insumo, StockInsumo,EntradaCompra,Plato
+from inventory.models import Proveedor, Insumo, StockInsumo,EntradaCompra,Plato, MenuPlan
 from inventory.services.recetas import calcular_costo_receta
-from web.forms import ProveedorForm, InsumoForm, EntradaCompraForm,PlatoForm, RecetaInsumoFormSet
+from web.forms import ProveedorForm, InsumoForm, EntradaCompraForm,PlatoForm, RecetaInsumoFormSet, MenuPlanForm,MenuPlanItemFormSet
 from django.shortcuts import redirect, get_object_or_404
+from inventory.services.planificacion import calcular_requerimientos_plan
 
 
 
@@ -36,7 +37,6 @@ class ProveedorUpdateView(UpdateView):
     form_class = ProveedorForm
     template_name = "web/proveedores_form.html"
     success_url = reverse_lazy("web:proveedores_list")
-
 
 
 class InsumoListView(ListView):
@@ -129,6 +129,7 @@ class InsumoUpdateView(UpdateView):
     template_name = "web/insumos_form.html"
     success_url = reverse_lazy("web:insumos_list")
 
+
 class EntradaCompraListView(ListView):
     model = EntradaCompra
     template_name = "web/compras_list.html"
@@ -162,6 +163,7 @@ class EntradaCompraCreateView(CreateView):
         response = super().form_valid(form)
         self.object.procesar(usuario=self.request.user if self.request.user.is_authenticated else None)
         return response
+
 
 class PlatoListView(ListView):
     model = Plato
@@ -206,6 +208,7 @@ class PlatoUpdateView(UpdateView):
         calcular_costo_receta(plato=self.object, guardar=True)
         return response
 
+
 def plato_recalcular_costo(request, pk):
     """
     Recalcula el costo de receta de un plato y vuelve al listado.
@@ -239,6 +242,7 @@ class PlatoDeleteView(DeleteView):
     template_name = "web/platos_confirm_delete.html"
     success_url = reverse_lazy("web:platos_list")
 
+
 def plato_receta_edit(request, pk):
     """
     Permite gestionar la receta (lista de insumos + cantidades) de un plato.
@@ -262,5 +266,90 @@ def plato_receta_edit(request, pk):
         {
             "plato": plato,
             "formset": formset,
+        },
+    )
+
+class MenuPlanListView(ListView):
+    model = MenuPlan
+    template_name = "web/planes_list.html"
+    context_object_name = "planes"
+    paginate_by = 20
+
+    def get_queryset(self):
+        qs = super().get_queryset().select_related("almacen")
+        return qs.order_by("-fecha_inicio", "-id")
+
+
+class MenuPlanRequerimientosView(DetailView):
+    model = MenuPlan
+    template_name = "web/planes_requerimientos.html"
+    context_object_name = "plan"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+
+        plan = self.object
+        # Usamos el almacen del plan; podríamos permitir override con GET más adelante.
+        requerimientos = calcular_requerimientos_plan(
+            plan=plan,
+            incluir_stock=True,
+            almacen=plan.almacen,
+        )
+
+        ctx["requerimientos"] = requerimientos
+        ctx["almacen"] = plan.almacen
+        return ctx
+    
+def menu_plan_create(request):
+    """
+    Crear un nuevo plan de menú + sus items (día/plato/porciones).
+    """
+    if request.method == "POST":
+        form = MenuPlanForm(request.POST)
+        formset = MenuPlanItemFormSet(request.POST)
+        if form.is_valid() and formset.is_valid():
+            plan = form.save()
+            formset.instance = plan
+            formset.save()
+            return redirect("web:planes_list")
+    else:
+        form = MenuPlanForm()
+        formset = MenuPlanItemFormSet()
+
+    return render(
+        request,
+        "web/planes_form.html",
+        {
+            "form": form,
+            "formset": formset,
+            "plan": None,
+        },
+    )
+
+
+def menu_plan_update(request, pk):
+    """
+    Editar un plan existente + sus items.
+    """
+    plan = get_object_or_404(MenuPlan, pk=pk)
+
+    if request.method == "POST":
+        form = MenuPlanForm(request.POST, instance=plan)
+        formset = MenuPlanItemFormSet(request.POST, instance=plan)
+        if form.is_valid() and formset.is_valid():
+            form.save()
+            formset.save()
+            return redirect("web:planes_list")
+    else:
+        form = MenuPlanForm(instance=plan)
+        formset = MenuPlanItemFormSet(instance=plan)
+
+    return render(
+        request,
+        "web/planes_form.html",
+        {
+            "form": form,
+            "formset": formset,
+            "plan": plan,
         },
     )

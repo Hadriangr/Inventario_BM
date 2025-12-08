@@ -15,6 +15,8 @@ from .models import (
     CategoriaPlato,
     Plato,
     EntradaCompra,
+    MenuPlan,
+    MenuPlanItem,
 )
 admin.site.site_header = "Administración de Inventario BM"
 admin.site.site_title = "Inventario BM"
@@ -233,3 +235,26 @@ class EntradaCompraAdmin(admin.ModelAdmin):
         if not obj.procesada:
             obj.procesar(usuario=request.user)
 
+class MenuPlanItemInline(admin.TabularInline):
+    model = MenuPlanItem
+    extra = 3
+
+
+@admin.register(MenuPlan)
+class MenuPlanAdmin(admin.ModelAdmin):
+    list_display = ("nombre", "fecha_inicio", "fecha_fin", "almacen", "estado")
+    search_fields = ("nombre",)
+    list_filter = ("estado", "almacen")
+    inlines = [MenuPlanItemInline]
+
+
+@admin.register(MenuPlanItem)
+class MenuPlanItemAdmin(admin.ModelAdmin):
+    list_display = ("plan", "fecha", "categoria_plato", "plato", "porciones_planificadas")
+    list_filter = ("categoria_plato", "fecha", "plan")
+    search_fields = ("plato__nombre", "plan__nombre")
+
+class MenuPlanItemInline(admin.TabularInline):
+    model = MenuPlanItem
+    extra = 3
+    autocomplete_fields = ("plato", "categoria_plato")

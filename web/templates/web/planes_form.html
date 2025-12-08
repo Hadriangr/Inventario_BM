@@ -1,0 +1,167 @@
+{% extends "web/base.html" %}
+
+{% block title %}
+  {% if plan %}Editar plan de menú{% else %}Nuevo plan de menú{% endif %}
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">
+  {% if plan %}Editar plan de menú{% else %}Nuevo plan de menú{% endif %}
+</h1>
+
+<form method="post">
+  {% csrf_token %}
+
+  <!-- Datos generales del plan -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="row">
+        <div class="mb-3 col-md-6">
+          <label class="form-label">Nombre</label>
+          {{ form.nombre }}
+        </div>
+        <div class="mb-3 col-md-3">
+          <label class="form-label">Fecha inicio</label>
+          {{ form.fecha_inicio }}
+        </div>
+        <div class="mb-3 col-md-3">
+          <label class="form-label">Fecha fin</label>
+          {{ form.fecha_fin }}
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="mb-3 col-md-4">
+          <label class="form-label">Almacén</label>
+          {{ form.almacen }}
+        </div>
+        <div class="mb-3 col-md-4">
+          <label class="form-label">Estado</label>
+          {{ form.estado }}
+        </div>
+        <div class="mb-3 col-md-4">
+          <label class="form-label">Notas</label>
+          {{ form.notas }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="h5 mb-3">Platos planificados</h2>
+
+  {{ formset.management_form }}
+
+  <table class="table table-sm align-middle" id="plan-items-table">
+    <thead>
+      <tr>
+        <th style="width: 140px;">Fecha</th>
+        <th>Categoría</th>
+        <th>Plato</th>
+        <th style="width: 140px;" class="text-end">Raciones</th>
+        <th>Notas</th>
+        <th style="width: 80px;">Eliminar</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in formset %}
+        <tr>
+          <td>{{ f.fecha }}</td>
+          <td>{{ f.categoria_plato }}</td>
+          <td>{{ f.plato }}</td>
+          <td class="text-end">{{ f.porciones_planificadas }}</td>
+          <td>{{ f.notas }}</td>
+          <td class="text-center">
+            <!-- Botón visible -->
+            <button type="button" class="btn btn-sm btn-danger eliminar-fila">
+              Eliminar
+            </button>
+            <!-- Checkbox DELETE oculto: lo marca el JS -->
+            <span style="display: none;">
+              {{ f.DELETE }}
+            </span>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <button type="button" class="btn btn-outline-primary btn-sm mb-3" id="add-row-btn">
+    + Agregar fila
+  </button>
+
+  <p class="text-muted">
+    Usa las filas vacías para agregar nuevos platos al plan.  
+    El botón "Eliminar" quita la fila del plan (si ya existe la borra, si es nueva no se crea).
+  </p>
+
+  <button type="submit" class="btn btn-primary">Guardar plan</button>
+  <a href="{% url 'web:planes_list' %}" class="btn btn-secondary">Cancelar</a>
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const addBtn = document.getElementById('add-row-btn');
+  const tableBody = document.querySelector('#plan-items-table tbody');
+
+  // Prefix real del formset (ej: "menuplanitem_set")
+  const prefix = "{{ formset.prefix }}";
+  const totalFormsInput = document.getElementById(`id_${prefix}-TOTAL_FORMS`);
+
+  if (!tableBody || !totalFormsInput) {
+    return;
+  }
+
+  // -------- Agregar filas --------
+  if (addBtn) {
+    addBtn.addEventListener('click', function() {
+      const totalForms = parseInt(totalFormsInput.value, 10);
+      const lastRow = tableBody.querySelector('tr:last-child');
+
+      if (!lastRow) return;
+
+      const newRow = lastRow.cloneNode(true);
+      const regex = new RegExp(`${prefix}-\\d+-`, 'g');
+
+      newRow.querySelectorAll('input, select').forEach(function(input) {
+        // Actualizar name e id con el nuevo índice
+        if (input.name) {
+          input.name = input.name.replace(regex, `${prefix}-${totalForms}-`);
+        }
+        if (input.id) {
+          input.id = input.id.replace(regex, `${prefix}-${totalForms}-`);
+        }
+
+        // Limpiar valores
+        if (input.type === 'checkbox') {
+          input.checked = false;
+        } else {
+          input.value = '';
+        }
+      });
+
+      tableBody.appendChild(newRow);
+      totalFormsInput.value = totalForms + 1;
+    });
+  }
+
+  // -------- Eliminar filas (marca DELETE + oculta) --------
+  tableBody.addEventListener('click', function(e) {
+    if (e.target.classList.contains('eliminar-fila')) {
+      const row = e.target.closest('tr');
+      if (!row) return;
+
+      // Buscar el checkbox DELETE de esa fila
+      const deleteCheckbox = row.querySelector(`input[type="checkbox"][name*="${prefix}"][name$="DELETE"]`);
+
+      if (deleteCheckbox) {
+        // Marcar para que Django borre / no cree el item
+        deleteCheckbox.checked = true;
+      }
+
+      // Ocultar la fila en la interfaz
+      row.style.display = 'none';
+    }
+  });
+});
+</script>
+{% endblock %}
