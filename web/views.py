@@ -5,9 +5,20 @@ from decimal import Decimal
 from django.db.models import Q, Sum
 from inventory.models import Proveedor, Insumo, StockInsumo,EntradaCompra,Plato, MenuPlan
 from inventory.services.recetas import calcular_costo_receta
-from web.forms import ProveedorForm, InsumoForm, EntradaCompraForm,PlatoForm, RecetaInsumoFormSet, MenuPlanForm,MenuPlanItemFormSet
+from web.forms import ProveedorForm, InsumoForm, EntradaCompraForm,PlatoForm, RecetaInsumoFormSet, MenuPlanForm,MenuPlanItemFormSet, ConteoInventario,ConteoInventarioItemFormSet, ConteoInventarioForm
+from datetime import date
 from django.shortcuts import redirect, get_object_or_404
 from inventory.services.planificacion import calcular_requerimientos_plan
+from inventory.models import ConteoInventario, EstadoConteo
+from inventory.services.conteo import conciliar_conteo
+from inventory.utils_roles import (
+    usuario_ve_todos_los_almacenes,
+    usuario_puede_cerrar_conteos,
+    usuario_es_supervisor,
+)
+from django.contrib import messages
+from django.http import Http404, HttpResponseForbidden
+from django.contrib.auth.decorators import login_required
 
 
 
@@ -353,3 +364,141 @@ def menu_plan_update(request, pk):
             "plan": plan,
         },
     )
+
+@login_required
+def conteos_list(request):
+    """
+    Lista de conteos de inventario visibles para el usuario.
+    Si el usuario no ve todos los almacenes, filtramos por sus almacenes asignados.
+    """
+    qs = ConteoInventario.objects.all()
+
+    if not usuario_ve_todos_los_almacenes(request.user):
+        qs = qs.filter(almacen__in=request.user.almacenes_asignados.all())
+
+    qs = qs.select_related("almacen", "responsable").order_by("-fecha", "-creado_en")
+
+    context = {
+        "conteos": qs,
+    }
+    return render(request, "web/conteos_list.html", context)
+
+
+@login_required
+def conteos_create(request):
+    """
+    Crear un nuevo conteo de inventario (estado BORRADOR).
+    Encabezado + líneas (formset).
+    Después de guardar, ejecutamos conciliar_conteo para rellenar
+    cantidad_sistema / diferencia / dentro_tolerancia.
+    """
+    if request.method == "POST":
+        form = ConteoInventarioForm(request.POST, user=request.user)
+        if form.is_valid():
+            conteo = form.save(commit=False)
+            conteo.responsable = request.user
+            conteo.estado = EstadoConteo.BORRADOR
+            conteo.save()
+
+            formset = ConteoInventarioItemFormSet(request.POST, instance=conteo)
+
+            if formset.is_valid():
+                formset.save()
+                # Calculamos diferencias inmediatamente
+                conciliar_conteo(conteo, aplicar_ajustes=False, usuario=request.user)
+                messages.success(request, "Conteo de inventario creado y conciliado.")
+                return redirect("web:conteos_detail", pk=conteo.pk)
+        else:
+            formset = ConteoInventarioItemFormSet(request.POST)
+    else:
+        form = ConteoInventarioForm(user=request.user, initial={"fecha": date.today()})
+        formset = ConteoInventarioItemFormSet()
+
+    context = {
+        "form": form,
+        "formset": formset,
+        "titulo": "Nuevo conteo de inventario",
+    }
+    return render(request, "web/conteos_form.html", context)
+
+
+@login_required
+def conteos_detail(request, pk):
+    """
+    Detalle del conteo: encabezado + líneas con:
+    - cantidad_contada
+    - cantidad_sistema
+    - diferencia
+    - dentro_tolerancia
+    Además, mostramos botones para:
+    - Editar (si está en BORRADOR)
+    - Cerrar conteo (POST a conteo_cerrar)
+    """
+    conteo = get_object_or_404(ConteoInventario, pk=pk)
+
+    # Seguridad: solo ver conteos de sus almacenes (si aplica)
+    if not usuario_ve_todos_los_almacenes(request.user):
+        if conteo.almacen not in request.user.almacenes_asignados.all():
+            raise Http404("No tienes acceso a este conteo.")
+
+    items = conteo.items.select_related("insumo").order_by("insumo__nombre")
+
+    context = {
+        "conteo": conteo,
+        "items": items,
+    }
+    return render(request, "web/conteos_detail.html", context)
+
+
+@login_required
+def conteo_cerrar(request, pk):
+    """
+    Acción para cerrar un conteo (pasar de BORRADOR a CERRADO).
+    - Respeta las mismas reglas que en el admin:
+      * Si hay diferencias críticas, solo un supervisor puede cerrarlo.
+      * Si lo cierra un supervisor con diferencias críticas, se llena aprobado_por / aprobado_en.
+    """
+    if request.method != "POST":
+        return HttpResponseForbidden("Método no permitido.")
+
+    conteo = get_object_or_404(ConteoInventario, pk=pk)
+
+    # Seguridad básica por almacén
+    if not usuario_ve_todos_los_almacenes(request.user):
+        if conteo.almacen not in request.user.almacenes_asignados.all():
+            raise Http404("No tienes acceso a este conteo.")
+
+    if not conteo.es_editable:
+        messages.error(request, "Este conteo ya no es editable.")
+        return redirect("web:conteos_detail", pk=conteo.pk)
+
+    # ¿El usuario tiene permiso funcional para cerrar?
+    if not usuario_puede_cerrar_conteos(request.user):
+        messages.error(request, "No tienes permisos para cerrar conteos de inventario.")
+        return redirect("web:conteos_detail", pk=conteo.pk)
+
+    # Reconciliamos antes de cerrar, para asegurarnos que diferencias y tolerancias están al día
+    conciliar_conteo(conteo, aplicar_ajustes=False, usuario=request.user)
+
+    # Si hay diferencias críticas y el usuario NO es supervisor → no permitimos cerrar
+    if conteo.tiene_diferencias_criticas and not usuario_es_supervisor(request.user):
+        messages.error(
+            request,
+            "El conteo tiene diferencias críticas. Debe ser cerrado por un supervisor.",
+        )
+        return redirect("web:conteos_detail", pk=conteo.pk)
+
+    # Si llegamos aquí, cerramos el conteo
+    from django.utils import timezone
+
+    conteo.estado = EstadoConteo.CERRADO
+
+    # Si hay diferencias críticas y quien cierra es supervisor, lo marcamos como aprobado
+    if conteo.tiene_diferencias_criticas and usuario_es_supervisor(request.user):
+        conteo.aprobado_por = request.user
+        conteo.aprobado_en = timezone.now()
+
+    conteo.save()
+
+    messages.success(request, "El conteo fue cerrado correctamente.")
+    return redirect("web:conteos_detail", pk=conteo.pk)

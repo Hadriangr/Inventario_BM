@@ -178,6 +178,13 @@ class Almacen(TimeStampedModel):
     )
     activo = models.BooleanField(default=True)
 
+    usuarios = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name="almacenes_asignados",
+        blank=True,
+        help_text="Usuarios que pueden operar este almacén.",
+    )
+
     class Meta:
         verbose_name = "Almacén"
         verbose_name_plural = "Almacenes"
@@ -788,3 +795,151 @@ class MenuPlanItem(TimeStampedModel):
             f"{self.fecha} - {self.categoria_plato} - "
             f"{self.plato} ({self.porciones_planificadas} porciones)"
         )
+    
+class EstadoConteo(models.TextChoices):
+    BORRADOR = "borrador", "Borrador"
+    CERRADO = "cerrado", "Cerrado"
+    AJUSTADO = "ajustado", "Ajustes aplicados"  # cuando ya se generaron ajustes de stock
+
+
+class ConteoInventario(models.Model):
+    """
+    Cabecera de un conteo físico de inventario.
+    Ej: Conteo del almacén principal el 10-12-2025, tolerancia 2%.
+    """
+
+    fecha = models.DateField()
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.PROTECT,
+        related_name="conteos",
+    )
+    responsable = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="conteos_inventario",
+    )
+
+    estado = models.CharField(
+        max_length=20,
+        choices=EstadoConteo.choices,
+        default=EstadoConteo.BORRADOR,
+    )
+
+    # Tolerancia en porcentaje (ej: 2.00 = 2%)
+    tolerancia_porcentaje = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        help_text="Tolerancia en % para considerar las diferencias aceptables.",
+    )
+
+    # (opcional) tolerancia absoluta en unidades. Si la usas, la aplicaremos en el servicio.
+    tolerancia_unidades = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Tolerancia absoluta en unidades (opcional).",
+    )
+
+    comentarios = models.TextField(blank=True)
+
+    aprobado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="conteos_aprobados",
+    )
+
+    aprobado_en = models.DateTimeField(null=True, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-fecha", "-creado_en"]
+        verbose_name = "Conteo de inventario"
+        verbose_name_plural = "Conteos de inventario"
+
+    def __str__(self):
+        return f"Conteo #{self.id} - {self.almacen} - {self.fecha} ({self.estado})"
+
+    @property
+    def es_editable(self) -> bool:
+        """Solo permite editar items cuando está en borrador."""
+        return self.estado == EstadoConteo.BORRADOR
+    
+    @property
+    def tiene_diferencias_criticas(self) -> bool:
+        """
+        Por ahora consideramos 'crítico' cualquier item fuera de tolerancia.
+        Si luego quieres un umbral extra, lo agregamos.
+        """
+        return self.items.filter(dentro_tolerancia=False).exists()
+    
+    def puede_aplicar_ajustes(self) -> bool:
+        """
+        Solo permitimos aplicar ajustes cuando el conteo está cerrado
+        y aún no se ha ajustado.
+        """
+        return self.estado == EstadoConteo.CERRADO
+
+
+
+class ConteoInventarioItem(models.Model):
+    """
+    Detalle del conteo, por insumo.
+    """
+
+    conteo = models.ForeignKey(
+        ConteoInventario,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    insumo = models.ForeignKey(
+        Insumo,
+        on_delete=models.PROTECT,
+        related_name="conteos_items",
+    )
+
+    # Cantidad contada físicamente por el usuario
+    cantidad_contada = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+    )
+
+    # Snapshot del sistema al momento de cerrar/conciliar el conteo
+    cantidad_sistema = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Cantidad de sistema al momento de conciliar (snapshot).",
+    )
+
+    # Diferencia = cantidad_contada - cantidad_sistema
+    diferencia = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
+
+    dentro_tolerancia = models.BooleanField(
+        default=False,
+        help_text="Indica si la diferencia está dentro de la tolerancia definida.",
+    )
+
+    comentarios = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+
+    class Meta:
+        verbose_name = "Ítem de conteo de inventario"
+        verbose_name_plural = "Ítems de conteo de inventario"
+        unique_together = ("conteo", "insumo")
+
+    def __str__(self):
+        return f"{self.insumo} - Conteo #{self.conteo_id}"

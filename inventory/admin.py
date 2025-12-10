@@ -17,9 +17,63 @@ from .models import (
     EntradaCompra,
     MenuPlan,
     MenuPlanItem,
+    ConteoInventario,
+    ConteoInventarioItem,
+    EstadoConteo,
 )
+
+from .admin_mixin import SoloAlmacenesUsuarioMixin
+from .services.conteo import conciliar_conteo
+from django.core.exceptions import ValidationError
+from django.utils import timezone
+from django.contrib import messages
+from .utils_roles import (
+    usuario_puede_cerrar_conteos,
+    usuario_puede_aplicar_ajustes,
+    usuario_es_supervisor,
+)
+
+
+
+
 admin.site.site_header = "Administración de Inventario BM"
 admin.site.site_title = "Inventario BM"
+
+
+
+def aplicar_ajustes_conteo(modeladmin, request, queryset):
+    """
+    Acción admin: aplica ajustes de inventario según roles configurados.
+    """
+
+    if not usuario_puede_aplicar_ajustes(request.user):
+        messages.error(
+            request,
+            "No tiene permiso para aplicar ajustes de inventario."
+        )
+        return
+
+    exitosos = 0
+    saltados = 0
+
+    for conteo in queryset:
+        if conteo.estado != EstadoConteo.CERRADO:
+            saltados += 1
+            continue
+
+        conciliar_conteo(conteo, aplicar_ajustes=True, usuario=request.user)
+
+        conteo.estado = EstadoConteo.AJUSTADO
+        conteo.save(update_fields=["estado"])
+        exitosos += 1
+
+    if exitosos:
+        messages.success(request, f"{exitosos} conteos ajustados correctamente.")
+
+    if saltados:
+        messages.warning(request, f"{saltados} conteos omitidos (no estaban cerrados).")
+
+
 
 @admin.register(LoteInsumo)
 class LoteInsumoAdmin(admin.ModelAdmin):
@@ -46,7 +100,6 @@ class LoteInsumoAdmin(admin.ModelAdmin):
     autocomplete_fields = ("insumo", "almacen")
 
 
-
 @admin.register(UnidadMedida)
 class UnidadMedidaAdmin(admin.ModelAdmin):
     list_display = ("nombre", "abreviatura", "es_base", "factor_base", "created_at")
@@ -65,6 +118,7 @@ class CategoriaInsumoAdmin(admin.ModelAdmin):
     list_display = ("nombre", "activo", "created_at")
     list_filter = ("activo",)
     search_fields = ("nombre",)
+
 
 class InsumoAdminForm(forms.ModelForm):
     class Meta:
@@ -139,6 +193,7 @@ class RecetaInsumoAdmin(admin.ModelAdmin):
     search_fields = ("plato__nombre", "insumo__nombre")
     autocomplete_fields = ("plato", "insumo")
 
+
 @admin.register(MovimientoInventario)
 class MovimientoInventarioAdmin(admin.ModelAdmin):
     list_display = (
@@ -196,10 +251,12 @@ class MovimientoInventarioAdmin(admin.ModelAdmin):
         }),
     )
 
+
 @admin.register(CategoriaPlato)
 class CategoriaPlatoAdmin(admin.ModelAdmin):
     list_display = ("nombre", )
     search_fields = ("nombre", )
+
 
 class EntradaCompraAdminForm(forms.ModelForm):
     class Meta:
@@ -208,6 +265,7 @@ class EntradaCompraAdminForm(forms.ModelForm):
         labels = {
             "costo_unitario": "Costo unitario (unidad de consumo)",
         }
+
 
 @admin.register(EntradaCompra)
 class EntradaCompraAdmin(admin.ModelAdmin):
@@ -235,6 +293,7 @@ class EntradaCompraAdmin(admin.ModelAdmin):
         if not obj.procesada:
             obj.procesar(usuario=request.user)
 
+
 class MenuPlanItemInline(admin.TabularInline):
     model = MenuPlanItem
     extra = 3
@@ -254,7 +313,97 @@ class MenuPlanItemAdmin(admin.ModelAdmin):
     list_filter = ("categoria_plato", "fecha", "plan")
     search_fields = ("plato__nombre", "plan__nombre")
 
+
 class MenuPlanItemInline(admin.TabularInline):
     model = MenuPlanItem
     extra = 3
     autocomplete_fields = ("plato", "categoria_plato")
+
+
+class ConteoInventarioItemInline(admin.TabularInline):
+    model = ConteoInventarioItem
+    extra = 1
+
+    readonly_fields = ("cantidad_sistema", "diferencia", "dentro_tolerancia")
+
+    def has_change_permission(self, request, obj=None):
+        # Solo se pueden editar ítems si el conteo está en BORRADOR
+        if obj is not None and not obj.es_editable:
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and not obj.es_editable:
+            return False
+        return super().has_delete_permission(request, obj)
+
+
+@admin.register(ConteoInventario)
+class ConteoInventarioAdmin(SoloAlmacenesUsuarioMixin, admin.ModelAdmin):
+    list_display = (
+        "id",
+        "fecha",
+        "almacen",
+        "responsable",
+        "estado",
+        "tolerancia_porcentaje",
+        "tiene_diferencias_criticas",
+        "aprobado_por",
+        "creado_en",
+    )
+    list_filter = ("estado", "almacen", "fecha", "responsable")
+    search_fields = ("id", "almacen__nombre", "responsable__username")
+    date_hierarchy = "fecha"
+    inlines = [ConteoInventarioItemInline]
+
+    readonly_fields = ("creado_en", "actualizado_en", "aprobado_por", "aprobado_en")
+    actions = [aplicar_ajustes_conteo]
+    def get_readonly_fields(self, request, obj=None):
+        base = list(self.readonly_fields)
+        if obj is not None and not obj.es_editable:
+            # Cuando no está en borrador, no permitimos cambiar cabecera crítica
+            base += [
+                "fecha",
+                "almacen",
+                "responsable",
+                "tolerancia_porcentaje",
+                "tolerancia_unidades",
+            ]
+        return base
+
+    def save_model(self, request, obj, form, change):
+        """
+        - Guarda el conteo.
+        - Ejecuta conciliar_conteo para calcular diferencias (para que las veas "al guardar").
+        - Si se intenta pasar de BORRADOR a CERRADO con diferencias críticas, exige supervisor.
+        """
+
+        estado_anterior = None
+        if change and "estado" in form.initial:
+            estado_anterior = form.initial["estado"]
+
+        # Guardamos primero
+        super().save_model(request, obj, form, change)
+
+        # Conciliamos siempre que el conteo no esté ajustado (ya cerrado definitivamente)
+        if obj.estado != EstadoConteo.AJUSTADO:
+            conciliar_conteo(obj, aplicar_ajustes=False, usuario=request.user)
+
+        # Si se intentó pasar de BORRADOR a CERRADO, validamos supervisor
+        if estado_anterior == EstadoConteo.BORRADOR and obj.estado == EstadoConteo.CERRADO:
+            # Recalculamos diferencias para estar seguros
+            conciliar_conteo(obj, aplicar_ajustes=False, usuario=request.user)
+
+        if obj.tiene_diferencias_criticas and not usuario_es_supervisor(request.user):
+            obj.estado = EstadoConteo.BORRADOR
+            obj.save(update_fields=["estado"])
+            raise ValidationError(
+                "Este conteo tiene diferencias críticas. "
+                "Debe ser cerrado y aprobado por un supervisor."
+            )
+
+        if obj.tiene_diferencias_criticas and usuario_es_supervisor(request.user):
+            obj.aprobado_por = request.user
+            obj.aprobado_en = timezone.now()
+            obj.save(update_fields=["aprobado_por", "aprobado_en"])
+

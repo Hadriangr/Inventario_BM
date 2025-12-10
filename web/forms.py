@@ -1,7 +1,9 @@
 
 from django import forms
-from inventory.models import Proveedor, Insumo,EntradaCompra,Plato, RecetaInsumo,MenuPlan,MenuPlanItem,CategoriaInsumo
+from inventory.models import Proveedor, Insumo,EntradaCompra,Plato, RecetaInsumo,MenuPlan,MenuPlanItem,ConteoInventario,ConteoInventarioItem, Almacen
 from django.forms import inlineformset_factory, BaseInlineFormSet
+from inventory.utils_roles import usuario_ve_todos_los_almacenes
+
 
 
 class ProveedorForm(forms.ModelForm):
@@ -142,4 +144,62 @@ MenuPlanItemFormSet = inlineformset_factory(
     form=MenuPlanItemForm,
     extra=3,          # filas vacías para agregar nuevos ítems
     can_delete=True,  # permite marcar líneas para eliminar
+)
+
+
+class ConteoInventarioForm(forms.ModelForm):
+    """
+    Formulario para el encabezado del conteo.
+    Filtramos almacenes según los permisos del usuario.
+    """
+
+    class Meta:
+        model = ConteoInventario
+        fields = [
+            "fecha",
+            "almacen",
+            "tolerancia_porcentaje",
+            "tolerancia_unidades",
+            "comentarios",
+        ]
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Fecha por defecto: hoy
+        if not self.instance.pk and "fecha" not in self.initial:
+            from datetime import date
+            self.initial["fecha"] = date.today()
+
+        # Limitar almacenes según permisos del usuario
+        if user is not None:
+            if usuario_ve_todos_los_almacenes(user):
+                qs = Almacen.objects.filter(activo=True)
+            else:
+                qs = Almacen.objects.filter(activo=True, usuarios=user)
+            self.fields["almacen"].queryset = qs
+
+
+class ConteoInventarioItemForm(forms.ModelForm):
+    """
+    Ítem del conteo: insumo + cantidad contada.
+    No exponemos cantidad_sistema ni diferencia: eso lo calcula el servicio.
+    """
+
+    class Meta:
+        model = ConteoInventarioItem
+        fields = ["insumo", "cantidad_contada", "comentarios"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Solo insumos activos
+        self.fields["insumo"].queryset = Insumo.objects.filter(activo=True).order_by("nombre")
+
+
+ConteoInventarioItemFormSet = inlineformset_factory(
+    ConteoInventario,
+    ConteoInventarioItem,
+    form=ConteoInventarioItemForm,
+    extra=5,           # puedes ajustar la cantidad de filas vacías
+    can_delete=True,   # para permitir eliminar líneas
 )

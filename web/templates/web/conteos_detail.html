@@ -1,0 +1,84 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+<h1>Detalle conteo #{{ conteo.id }}</h1>
+
+<p>
+    <strong>Fecha:</strong> {{ conteo.fecha }}<br>
+    <strong>Almacén:</strong> {{ conteo.almacen }}<br>
+    <strong>Responsable:</strong> {{ conteo.responsable }}<br>
+    <strong>Estado:</strong> {{ conteo.get_estado_display }}<br>
+    <strong>Tolerancia %:</strong> {{ conteo.tolerancia_porcentaje }}<br>
+    <strong>Tolerancia unidades:</strong> {{ conteo.tolerancia_unidades }}<br>
+    <strong>Comentarios:</strong> {{ conteo.comentarios|default:"-" }}<br>
+    {% if conteo.aprobado_por %}
+        <strong>Aprobado por:</strong> {{ conteo.aprobado_por }} el {{ conteo.aprobado_en }}<br>
+    {% endif %}
+</p>
+
+<hr>
+
+<h2>Ítems</h2>
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Insumo</th>
+            <th>Contado</th>
+            <th>Sistema</th>
+            <th>Diferencia</th>
+            <th>Dentro tolerancia</th>
+        </tr>
+    </thead>
+   <tbody>
+    {% for item in items %}
+        <tr class="{% if not item.dentro_tolerancia %}table-danger{% endif %}">
+            <td>{{ item.insumo }}</td>
+            <td>{{ item.cantidad_contada }}</td>
+            <td>{{ item.cantidad_sistema|default:"-" }}</td>
+            <td>{{ item.diferencia|default:"-" }}</td>
+            <td>
+                {% if item.dentro_tolerancia %}
+                    <span class="text-success">Sí</span>
+                {% else %}
+                    <span class="text-danger">No</span>
+                {% endif %}
+            </td>
+        </tr>
+    {% empty %}
+        <tr>
+            <td colspan="5">No hay ítems en este conteo.</td>
+        </tr>
+    {% endfor %}
+</tbody>
+</table>
+
+<hr>
+
+<p>
+    <a href="{% url 'web:conteos_list' %}" class="btn btn-secondary">Volver al listado</a>
+</p>
+
+{% if conteo.es_editable %}
+    <form method="post" action="{% url 'web:conteos_cerrar' conteo.pk %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">
+            Cerrar conteo
+        </button>
+    </form>
+    <p class="mt-2">
+        {% if conteo.tiene_diferencias_criticas %}
+            <strong class="text-danger">
+                Atención: este conteo tiene diferencias críticas. Solo un supervisor puede cerrarlo.
+            </strong>
+        {% else %}
+            <span class="text-success">
+                Todas las diferencias están dentro de la tolerancia.
+            </span>
+        {% endif %}
+    </p>
+{% else %}
+    <p><em>Este conteo ya está cerrado y no puede editarse.</em></p>
+{% endif %}
+
+{% endblock %}

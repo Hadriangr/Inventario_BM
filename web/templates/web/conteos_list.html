@@ -1,0 +1,50 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+<h1>Conteos de inventario</h1>
+
+<p>
+    <a class="btn btn-primary" href="{% url 'web:conteos_create' %}">Nuevo conteo</a>
+</p>
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Fecha</th>
+            <th>Almacén</th>
+            <th>Responsable</th>
+            <th>Estado</th>
+            <th>Diferencias críticas</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for conteo in conteos %}
+            <tr>
+                <td>{{ conteo.id }}</td>
+                <td>{{ conteo.fecha }}</td>
+                <td>{{ conteo.almacen }}</td>
+                <td>{{ conteo.responsable }}</td>
+                <td>{{ conteo.get_estado_display }}</td>
+                <td>
+                    {% if conteo.tiene_diferencias_criticas %}
+                        <span class="text-danger">Sí</span>
+                    {% else %}
+                        <span class="text-success">No</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a class="btn btn-sm btn-secondary" href="{% url 'web:conteos_detail' conteo.pk %}">
+                        Ver
+                    </a>
+                </td>
+            </tr>
+        {% empty %}
+            <tr>
+                <td colspan="7">No hay conteos registrados.</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

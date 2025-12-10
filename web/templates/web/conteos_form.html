@@ -1,0 +1,77 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+<h1>{{ titulo }}</h1>
+
+<form method="post">
+    {% csrf_token %}
+
+    <fieldset>
+        <legend>Datos del conteo</legend>
+        {{ form.non_field_errors }}
+        <div class="mb-3">
+            {{ form.fecha.label_tag }}<br>
+            {{ form.fecha }}
+            {{ form.fecha.errors }}
+        </div>
+        <div class="mb-3">
+            {{ form.almacen.label_tag }}<br>
+            {{ form.almacen }}
+            {{ form.almacen.errors }}
+        </div>
+        <div class="mb-3">
+            {{ form.tolerancia_porcentaje.label_tag }}<br>
+            {{ form.tolerancia_porcentaje }} %
+            {{ form.tolerancia_porcentaje.errors }}
+        </div>
+        <div class="mb-3">
+            {{ form.tolerancia_unidades.label_tag }}<br>
+            {{ form.tolerancia_unidades }}
+            {{ form.tolerancia_unidades.errors }}
+        </div>
+        <div class="mb-3">
+            {{ form.comentarios.label_tag }}<br>
+            {{ form.comentarios }}
+            {{ form.comentarios.errors }}
+        </div>
+    </fieldset>
+
+    <hr>
+
+    <fieldset>
+        <legend>Ítems del conteo</legend>
+
+        {{ formset.management_form }}
+        {% for form_item in formset %}
+            <div class="card mb-2 p-2">
+                {{ form_item.non_field_errors }}
+                <div class="row">
+                    <div class="col-md-6">
+                        {{ form_item.insumo.label_tag }}
+                        {{ form_item.insumo }}
+                        {{ form_item.insumo.errors }}
+                    </div>
+                    <div class="col-md-3">
+                        {{ form_item.cantidad_contada.label_tag }}
+                        {{ form_item.cantidad_contada }}
+                        {{ form_item.cantidad_contada.errors }}
+                    </div>
+                    <div class="col-md-3">
+                        {{ form_item.comentarios.label_tag }}
+                        {{ form_item.comentarios }}
+                        {{ form_item.comentarios.errors }}
+                    </div>
+                </div>
+                {% if form_item.DELETE %}
+                    <div class="mt-1">
+                        {{ form_item.DELETE }} Eliminar
+                    </div>
+                {% endif %}
+            </div>
+        {% endfor %}
+    </fieldset>
+
+    <button type="submit" class="btn btn-primary">Guardar conteo</button>
+    <a href="{% url 'web:conteos_list' %}" class="btn btn-secondary">Volver</a>
+</form>
+{% endblock %}

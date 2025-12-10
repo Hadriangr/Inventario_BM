@@ -21,6 +21,11 @@ from web.views import (
     MenuPlanRequerimientosView,
     menu_plan_create,
     menu_plan_update,
+    conteos_list,
+    conteos_create,
+    conteos_detail,
+    conteo_cerrar,
+    
 )
 
 app_name = "web"
@@ -70,6 +75,11 @@ urlpatterns = [
     path("planes/<int:pk>/editar/", menu_plan_update, name="planes_update"),
     path("planes/<int:pk>/requerimientos/", MenuPlanRequerimientosView.as_view(), name="planes_requerimientos"),
 
+    # Conteos de inventario
+    path("conteos/", conteos_list, name="conteos_list"),
+    path("conteos/nuevo/", conteos_create, name="conteos_create"),
+    path("conteos/<int:pk>/", conteos_detail, name="conteos_detail"),
+    path("conteos/<int:pk>/cerrar/", conteo_cerrar, name="conteos_cerrar"),
 
 
 ]
