@@ -17,8 +17,10 @@ from inventory.utils_roles import (
     usuario_es_supervisor,
 )
 from django.contrib import messages
-from django.http import Http404, HttpResponseForbidden
+from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_GET
+from django.utils import timezone
 
 
 
@@ -446,6 +448,7 @@ def conteos_detail(request, pk):
     context = {
         "conteo": conteo,
         "items": items,
+        "es_supervisor": usuario_es_supervisor(request.user),
     }
     return render(request, "web/conteos_detail.html", context)
 
@@ -501,4 +504,184 @@ def conteo_cerrar(request, pk):
     conteo.save()
 
     messages.success(request, "El conteo fue cerrado correctamente.")
+    return redirect("web:conteos_detail", pk=conteo.pk)
+
+@require_GET
+@login_required
+def api_conteo_preview(request):
+    """
+    Devuelve cantidad_sistema y diferencia para un insumo en un almacén dado,
+    considerando la tolerancia ingresada (porcentaje y/o unidades).
+
+    GET params:
+      - almacen_id
+      - insumo_id
+      - cantidad_contada
+      - tolerancia_porcentaje (opcional)
+      - tolerancia_unidades (opcional)
+    """
+    from decimal import Decimal, InvalidOperation
+    from inventory.models import StockInsumo, Almacen, Insumo
+
+    almacen_id = request.GET.get("almacen_id")
+    insumo_id = request.GET.get("insumo_id")
+    cantidad_contada_str = request.GET.get("cantidad_contada")
+
+    tol_pct_str = request.GET.get("tolerancia_porcentaje", "")
+    tol_units_str = request.GET.get("tolerancia_unidades", "")
+
+    if not almacen_id or not insumo_id or cantidad_contada_str is None:
+        return JsonResponse({"ok": False, "error": "Faltan parámetros."}, status=400)
+
+    # Seguridad por almacenes (misma lógica que venimos usando)
+    almacen = Almacen.objects.filter(pk=almacen_id, activo=True).first()
+    if not almacen:
+        return JsonResponse({"ok": False, "error": "Almacén inválido."}, status=404)
+
+    if not usuario_ve_todos_los_almacenes(request.user):
+        if not almacen.usuarios.filter(pk=request.user.pk).exists():
+            return JsonResponse({"ok": False, "error": "Sin acceso a este almacén."}, status=403)
+
+    insumo = Insumo.objects.filter(pk=insumo_id, activo=True).first()
+    if not insumo:
+        return JsonResponse({"ok": False, "error": "Insumo inválido."}, status=404)
+
+    try:
+        cantidad_contada = Decimal(cantidad_contada_str)
+    except (InvalidOperation, TypeError):
+        return JsonResponse({"ok": False, "error": "cantidad_contada inválida."}, status=400)
+
+    # cantidad sistema
+    stock = StockInsumo.objects.filter(almacen=almacen, insumo=insumo).first()
+    cantidad_sistema = stock.cantidad_actual if stock else Decimal("0")
+    diferencia = cantidad_contada - cantidad_sistema
+
+    # tolerancias
+    tol_pct = None
+    tol_units = None
+
+    if tol_pct_str not in ("", None):
+        try:
+            tol_pct = Decimal(tol_pct_str)
+        except InvalidOperation:
+            tol_pct = None
+
+    if tol_units_str not in ("", None):
+        try:
+            tol_units = Decimal(tol_units_str)
+        except InvalidOperation:
+            tol_units = None
+
+    abs_diff = abs(diferencia)
+    unidad = ""
+    if getattr(insumo, "unidad", None) and getattr(insumo.unidad, "abreviatura", None):
+        unidad = insumo.unidad.abreviatura
+    elif getattr(insumo, "unidad", None) and getattr(insumo.unidad, "nombre", None):
+        unidad = insumo.unidad.nombre
+    dentro = True
+    # si hay tolerancia por unidades definida, se usa
+    if tol_units is not None:
+        dentro = abs_diff <= tol_units
+
+    # si hay tolerancia porcentaje definida, se evalúa también
+    if tol_pct is not None:
+        base = cantidad_sistema if cantidad_sistema != 0 else Decimal("1")
+        pct_diff = (abs_diff / base) * Decimal("100")
+        dentro = dentro and (pct_diff <= tol_pct)
+
+    # “crítica” si está fuera de tolerancia
+    critica = not dentro
+
+    return JsonResponse({
+        "ok": True,
+        "cantidad_sistema": str(cantidad_sistema),
+        "diferencia": str(diferencia),
+        "dentro_tolerancia": dentro,
+        "critica": critica,
+        "unidad": unidad,
+    })
+
+@login_required
+def conteo_solicitar_aprobacion(request, pk):
+    """
+    Operador: pasa BORRADOR -> PENDIENTE_APROBACION.
+    Solo se permite si está en BORRADOR.
+    """
+    if request.method != "POST":
+        return HttpResponseForbidden("Método no permitido.")
+
+    conteo = get_object_or_404(ConteoInventario, pk=pk)
+
+    # Seguridad por almacén
+    if not usuario_ve_todos_los_almacenes(request.user):
+        if conteo.almacen not in request.user.almacenes_asignados.all():
+            raise Http404("No tienes acceso a este conteo.")
+
+    if conteo.estado != EstadoConteo.BORRADOR:
+        messages.error(request, "Solo puedes solicitar aprobación desde BORRADOR.")
+        return redirect("web:conteos_detail", pk=conteo.pk)
+
+    # Reconciliamos antes de enviar a aprobación (para dejar diferencias guardadas)
+    conciliar_conteo(conteo, aplicar_ajustes=False, usuario=request.user)
+
+    conteo.estado = EstadoConteo.PENDIENTE
+    conteo.save(update_fields=["estado"])
+
+    messages.success(request, "Conteo enviado a aprobación de supervisor.")
+    return redirect("web:conteos_detail", pk=conteo.pk)
+
+
+@login_required
+def conteo_aprobar(request, pk):
+    """
+    Supervisor: pasa PENDIENTE_APROBACION -> CERRADO.
+    Registra aprobado_por y aprobado_en.
+    Permite agregar una nota (opcional) y la guarda en conteo.comentarios.
+    """
+    if request.method != "POST":
+        return HttpResponseForbidden("Método no permitido.")
+
+    if not usuario_es_supervisor(request.user):
+        return HttpResponseForbidden("Solo un supervisor puede aprobar.")
+
+    conteo = get_object_or_404(ConteoInventario, pk=pk)
+
+    # Seguridad por almacén
+    if not usuario_ve_todos_los_almacenes(request.user):
+        if conteo.almacen not in request.user.almacenes_asignados.all():
+            raise Http404("No tienes acceso a este conteo.")
+
+    if conteo.estado != EstadoConteo.PENDIENTE:
+        messages.error(
+            request,
+            "Este conteo no está pendiente de aprobación."
+        )
+        return redirect("web:conteos_detail", pk=conteo.pk)
+
+
+    # Reconciliar antes de cerrar (por seguridad)
+    conciliar_conteo(conteo, aplicar_ajustes=False, usuario=request.user)
+
+    # Nota supervisor (opcional)
+    nota = (request.POST.get("nota_supervisor") or "").strip()
+    if nota:
+        conteo.comentarios = (conteo.comentarios or "").rstrip() + nota
+
+        # 1) Pasar a CERRADO y registrar aprobación
+    conteo.estado = EstadoConteo.CERRADO
+    conteo.aprobado_por = request.user
+    conteo.aprobado_en = timezone.now()
+    conteo.save(update_fields=["estado", "aprobado_por", "aprobado_en", "comentarios"])
+
+    # 2) Recargar desde BD para asegurar que el servicio vea estado=CERRADO
+    conteo.refresh_from_db(fields=["estado"])
+
+    # 3) Aplicar ajustes automáticamente (el servicio exige CERRADO)
+    conciliar_conteo(conteo, aplicar_ajustes=True, usuario=request.user)
+
+    # 4) Marcar como AJUSTADO (estado final)
+    conteo.estado = EstadoConteo.AJUSTADO
+    conteo.save(update_fields=["estado"])
+
+    messages.success(request, "Conteo aprobado, cerrado y ajustes aplicados correctamente.")
     return redirect("web:conteos_detail", pk=conteo.pk)

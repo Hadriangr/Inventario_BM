@@ -800,6 +800,7 @@ class EstadoConteo(models.TextChoices):
     BORRADOR = "borrador", "Borrador"
     CERRADO = "cerrado", "Cerrado"
     AJUSTADO = "ajustado", "Ajustes aplicados"  # cuando ya se generaron ajustes de stock
+    PENDIENTE = "pendiente_aprobacion", "Pendiente de aprobación"
 
 
 class ConteoInventario(models.Model):
@@ -830,9 +831,11 @@ class ConteoInventario(models.Model):
     tolerancia_porcentaje = models.DecimalField(
         max_digits=5,
         decimal_places=2,
-        default=0,
+        null=True,
+        blank=True,
         help_text="Tolerancia en % para considerar las diferencias aceptables.",
     )
+
 
     # (opcional) tolerancia absoluta en unidades. Si la usas, la aplicaremos en el servicio.
     tolerancia_unidades = models.DecimalField(

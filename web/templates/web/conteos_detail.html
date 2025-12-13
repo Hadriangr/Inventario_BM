@@ -11,6 +11,7 @@
     <strong>Tolerancia %:</strong> {{ conteo.tolerancia_porcentaje }}<br>
     <strong>Tolerancia unidades:</strong> {{ conteo.tolerancia_unidades }}<br>
     <strong>Comentarios:</strong> {{ conteo.comentarios|default:"-" }}<br>
+
     {% if conteo.aprobado_por %}
         <strong>Aprobado por:</strong> {{ conteo.aprobado_por }} el {{ conteo.aprobado_en }}<br>
     {% endif %}
@@ -30,55 +31,64 @@
             <th>Dentro tolerancia</th>
         </tr>
     </thead>
-   <tbody>
-    {% for item in items %}
-        <tr class="{% if not item.dentro_tolerancia %}table-danger{% endif %}">
-            <td>{{ item.insumo }}</td>
-            <td>{{ item.cantidad_contada }}</td>
-            <td>{{ item.cantidad_sistema|default:"-" }}</td>
-            <td>{{ item.diferencia|default:"-" }}</td>
-            <td>
-                {% if item.dentro_tolerancia %}
-                    <span class="text-success">Sí</span>
-                {% else %}
-                    <span class="text-danger">No</span>
-                {% endif %}
-            </td>
-        </tr>
-    {% empty %}
-        <tr>
-            <td colspan="5">No hay ítems en este conteo.</td>
-        </tr>
-    {% endfor %}
-</tbody>
+    <tbody>
+        {% for item in items %}
+            <tr class="{% if not item.dentro_tolerancia %}table-danger{% endif %}">
+                <td>{{ item.insumo }}</td>
+                <td>{{ item.cantidad_contada }}</td>
+                <td>{{ item.cantidad_sistema|default:"-" }}</td>
+                <td>{{ item.diferencia|default:"-" }}</td>
+                <td>
+                    {% if item.dentro_tolerancia %}
+                        <span class="text-success">Sí</span>
+                    {% else %}
+                        <span class="text-danger">No</span>
+                    {% endif %}
+                </td>
+            </tr>
+        {% empty %}
+            <tr>
+                <td colspan="5">No hay ítems en este conteo.</td>
+            </tr>
+        {% endfor %}
+    </tbody>
 </table>
 
 <hr>
 
-<p>
-    <a href="{% url 'web:conteos_list' %}" class="btn btn-secondary">Volver al listado</a>
-</p>
-
-{% if conteo.es_editable %}
-    <form method="post" action="{% url 'web:conteos_cerrar' conteo.pk %}" style="display:inline;">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-danger">
-            Cerrar conteo
-        </button>
-    </form>
-    <p class="mt-2">
-        {% if conteo.tiene_diferencias_criticas %}
-            <strong class="text-danger">
-                Atención: este conteo tiene diferencias críticas. Solo un supervisor puede cerrarlo.
-            </strong>
-        {% else %}
-            <span class="text-success">
-                Todas las diferencias están dentro de la tolerancia.
-            </span>
-        {% endif %}
-    </p>
-{% else %}
-    <p><em>Este conteo ya está cerrado y no puede editarse.</em></p>
+<!-- MENSAJES DE ESTADO (solo aquí, sin duplicar) -->
+{% if conteo.estado == "pendiente_aprobacion" %}
+  <p class="mt-2"><strong>Este conteo está pendiente de aprobación.</strong></p>
+  <p class="text-muted">No se puede editar mientras espera aprobación de un supervisor.</p>
+{% elif conteo.estado == "cerrado" or conteo.estado == "ajustado" %}
+  <p class="mt-2 text-muted"><em>Este conteo ya está cerrado y no puede editarse.</em></p>
 {% endif %}
+
+<!-- ACCIONES -->
+<div class="mt-3">
+    <a href="{% url 'web:conteos_list' %}" class="btn btn-secondary">Volver al listado</a>
+
+    {% if conteo.estado == "borrador" %}
+      <form method="post" action="{% url 'web:conteo_solicitar_aprobacion' conteo.pk %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-warning">Solicitar aprobación</button>
+      </form>
+    {% endif %}
+
+    {% if conteo.estado == "pendiente_aprobacion" and es_supervisor %}
+    <form method="post" action="{% url 'web:conteo_aprobar' conteo.pk %}" class="mt-3">
+        {% csrf_token %}
+
+        <div class="mb-2">
+        <label for="id_nota_supervisor"><strong>Nota del supervisor (opcional)</strong></label>
+        <textarea id="id_nota_supervisor" name="nota_supervisor" class="form-control" rows="3"
+            placeholder="Ej: Se aprueba con observación por merma no registrada..."></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-danger">Aprobar y cerrar</button>
+    </form>
+    {% endif %}
+
+</div>
 
 {% endblock %}

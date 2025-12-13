@@ -1,0 +1,1 @@
+from .movimientos import registrar_ajuste_inventario

@@ -25,6 +25,9 @@ from web.views import (
     conteos_create,
     conteos_detail,
     conteo_cerrar,
+    api_conteo_preview,
+    conteo_solicitar_aprobacion,
+    conteo_aprobar,
     
 )
 
@@ -80,6 +83,11 @@ urlpatterns = [
     path("conteos/nuevo/", conteos_create, name="conteos_create"),
     path("conteos/<int:pk>/", conteos_detail, name="conteos_detail"),
     path("conteos/<int:pk>/cerrar/", conteo_cerrar, name="conteos_cerrar"),
+    path("api/conteos/preview/", api_conteo_preview, name="api_conteo_preview"),
+    path("conteos/<int:pk>/solicitar-aprobacion/", conteo_solicitar_aprobacion, name="conteo_solicitar_aprobacion"),
+    path("conteos/<int:pk>/aprobar/", conteo_aprobar, name="conteo_aprobar"),
+
+
 
 
 ]

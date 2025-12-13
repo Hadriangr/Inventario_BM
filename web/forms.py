@@ -162,6 +162,18 @@ class ConteoInventarioForm(forms.ModelForm):
             "tolerancia_unidades",
             "comentarios",
         ]
+    
+    def clean(self):
+        cleaned_data = super().clean()
+
+        tol_pct = cleaned_data.get("tolerancia_porcentaje")
+        tol_units = cleaned_data.get("tolerancia_unidades")
+
+        if tol_pct is None and tol_units is None:
+            raise forms.ValidationError("Debes ingresar una tolerancia: porcentaje o unidades.")
+
+        return cleaned_data
+
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)

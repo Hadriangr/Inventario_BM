@@ -9,26 +9,31 @@
     <fieldset>
         <legend>Datos del conteo</legend>
         {{ form.non_field_errors }}
+
         <div class="mb-3">
             {{ form.fecha.label_tag }}<br>
             {{ form.fecha }}
             {{ form.fecha.errors }}
         </div>
+
         <div class="mb-3">
             {{ form.almacen.label_tag }}<br>
             {{ form.almacen }}
             {{ form.almacen.errors }}
         </div>
+
         <div class="mb-3">
             {{ form.tolerancia_porcentaje.label_tag }}<br>
             {{ form.tolerancia_porcentaje }} %
             {{ form.tolerancia_porcentaje.errors }}
         </div>
+
         <div class="mb-3">
             {{ form.tolerancia_unidades.label_tag }}<br>
             {{ form.tolerancia_unidades }}
             {{ form.tolerancia_unidades.errors }}
         </div>
+
         <div class="mb-3">
             {{ form.comentarios.label_tag }}<br>
             {{ form.comentarios }}
@@ -42,31 +47,55 @@
         <legend>Ítems del conteo</legend>
 
         {{ formset.management_form }}
+
         {% for form_item in formset %}
-            <div class="card mb-2 p-2">
+            <div class="card mb-3 p-3">
+
                 {{ form_item.non_field_errors }}
-                <div class="row">
-                    <div class="col-md-6">
+
+                <div class="row align-items-end">
+                    <div class="col-md-5">
                         {{ form_item.insumo.label_tag }}
                         {{ form_item.insumo }}
                         {{ form_item.insumo.errors }}
                     </div>
+
                     <div class="col-md-3">
                         {{ form_item.cantidad_contada.label_tag }}
                         {{ form_item.cantidad_contada }}
                         {{ form_item.cantidad_contada.errors }}
                     </div>
-                    <div class="col-md-3">
+
+                    <div class="col-md-4">
                         {{ form_item.comentarios.label_tag }}
                         {{ form_item.comentarios }}
                         {{ form_item.comentarios.errors }}
                     </div>
                 </div>
+
                 {% if form_item.DELETE %}
-                    <div class="mt-1">
+                    <div class="mt-2">
                         {{ form_item.DELETE }} Eliminar
                     </div>
                 {% endif %}
+
+                <!-- PREVIEW EN VIVO -->
+                <div class="mt-3 p-2 border rounded bg-light">
+                <small>
+                    <strong>Sistema:</strong>
+                    <span class="js-sistema">-</span>
+                    <span class="js-unidad text-muted"></span>
+                    &nbsp;|&nbsp;
+
+                    <strong>Diferencia:</strong>
+                    <span class="js-diferencia">-</span>
+                    <span class="js-unidad text-muted"></span>
+                    &nbsp;|&nbsp;
+
+                    <strong>Estado:</strong>
+                    <span class="js-estado">-</span>
+                </small>
+                </div>
             </div>
         {% endfor %}
     </fieldset>
@@ -74,4 +103,111 @@
     <button type="submit" class="btn btn-primary">Guardar conteo</button>
     <a href="{% url 'web:conteos_list' %}" class="btn btn-secondary">Volver</a>
 </form>
+
+<script>
+(function () {
+  const previewUrl = "{% url 'web:api_conteo_preview' %}";
+
+  function qs(el, sel) { return el.querySelector(sel); }
+
+  function getValByNameEndsWith(card, suffix) {
+    const inputs = card.querySelectorAll("input, select, textarea");
+    for (const i of inputs) {
+      if (i.name && i.name.endsWith(suffix)) return i;
+    }
+    return null;
+  }
+
+  async function updateCard(card) {
+    const almacenEl = document.getElementById("id_almacen");
+    const tolPctEl = document.getElementById("id_tolerancia_porcentaje");
+    const tolUniEl = document.getElementById("id_tolerancia_unidades");
+    const outUnidadEls = card.querySelectorAll(".js-unidad");
+
+
+    const insumoEl = getValByNameEndsWith(card, "-insumo");
+    const contadaEl = getValByNameEndsWith(card, "-cantidad_contada");
+
+    const outSistema = qs(card, ".js-sistema");
+    const outDif = qs(card, ".js-diferencia");
+    const outEstado = qs(card, ".js-estado");
+
+    if (!almacenEl || !insumoEl || !contadaEl) return;
+
+    const almacenId = almacenEl.value;
+    const insumoId = insumoEl.value;
+    const contada = contadaEl.value;
+
+    if (!almacenId || !insumoId || contada === "") {
+      outSistema.textContent = "-";
+      outDif.textContent = "-";
+      outEstado.textContent = "-";
+      outUnidadEls.forEach(el => el.textContent = "");
+      return;
+    }
+
+    const params = new URLSearchParams({
+      almacen_id: almacenId,
+      insumo_id: insumoId,
+      cantidad_contada: contada,
+    });
+
+    if (tolPctEl && tolPctEl.value !== "") params.append("tolerancia_porcentaje", tolPctEl.value);
+    if (tolUniEl && tolUniEl.value !== "") params.append("tolerancia_unidades", tolUniEl.value);
+
+    try {
+      const res = await fetch(previewUrl + "?" + params.toString());
+      const data = await res.json();
+
+      if (!data.ok) {
+        outSistema.textContent = "-";
+        outDif.textContent = "-";
+        outEstado.textContent = data.error || "Error";
+
+        return;
+      }
+
+      outSistema.textContent = data.cantidad_sistema;
+      outDif.textContent = data.diferencia;
+      outUnidadEls.forEach(el => el.textContent = data.unidad ? ` ${data.unidad}` : "");
+
+      if (data.dentro_tolerancia) {
+        outEstado.textContent = "Dentro de tolerancia";
+        outEstado.className = "js-estado text-success";
+      } else {
+        outEstado.textContent = "Fuera de tolerancia";
+        outEstado.className = "js-estado text-danger";
+      }
+    } catch {
+      outEstado.textContent = "Error";
+    }
+  }
+
+  function debounce(fn, ms) {
+    let t;
+    return function () {
+      clearTimeout(t);
+      t = setTimeout(fn, ms);
+    }
+  }
+
+  document.querySelectorAll(".card").forEach(card => {
+    const insumoEl = getValByNameEndsWith(card, "-insumo");
+    const contadaEl = getValByNameEndsWith(card, "-cantidad_contada");
+    const debounced = debounce(() => updateCard(card), 200);
+
+    if (insumoEl) insumoEl.addEventListener("change", debounced);
+    if (contadaEl) contadaEl.addEventListener("input", debounced);
+  });
+
+  ["id_almacen", "id_tolerancia_porcentaje", "id_tolerancia_unidades"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", () => {
+      document.querySelectorAll(".card").forEach(updateCard);
+    });
+  });
+
+})();
+</script>
+
 {% endblock %}

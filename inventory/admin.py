@@ -32,6 +32,9 @@ from .utils_roles import (
     usuario_puede_aplicar_ajustes,
     usuario_es_supervisor,
 )
+from django.contrib.auth import get_user_model
+User = get_user_model()
+
 
 
 
@@ -370,40 +373,68 @@ class ConteoInventarioAdmin(SoloAlmacenesUsuarioMixin, admin.ModelAdmin):
                 "tolerancia_unidades",
             ]
         return base
-
-    def save_model(self, request, obj, form, change):
+    
+    def formfield_for_choice_field(self, db_field, request, **kwargs):
         """
-        - Guarda el conteo.
-        - Ejecuta conciliar_conteo para calcular diferencias (para que las veas "al guardar").
-        - Si se intenta pasar de BORRADOR a CERRADO con diferencias críticas, exige supervisor.
+        Oculta el estado AJUSTADO en el formulario: solo debe setearse por acción admin.
         """
+        field = super().formfield_for_choice_field(db_field, request, **kwargs)
 
-        estado_anterior = None
-        if change and "estado" in form.initial:
-            estado_anterior = form.initial["estado"]
+        if db_field.name == "estado":
+            # Siempre ocultamos AJUSTADO del formulario
+            field.choices = [
+                (value, label)
+                for value, label in field.choices
+                if value != EstadoConteo.AJUSTADO
+            ]
+        return field
 
-        # Guardamos primero
-        super().save_model(request, obj, form, change)
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
 
-        # Conciliamos siempre que el conteo no esté ajustado (ya cerrado definitivamente)
+        obj = form.instance
+        estado_anterior = getattr(obj, "_estado_anterior", None)
+
+        # 1) Conciliar siempre (para que se vean diferencias al guardar)
         if obj.estado != EstadoConteo.AJUSTADO:
             conciliar_conteo(obj, aplicar_ajustes=False, usuario=request.user)
 
-        # Si se intentó pasar de BORRADOR a CERRADO, validamos supervisor
-        if estado_anterior == EstadoConteo.BORRADOR and obj.estado == EstadoConteo.CERRADO:
-            # Recalculamos diferencias para estar seguros
+        # 2) Prohibir que alguien setee AJUSTADO manualmente
+        if obj.estado == EstadoConteo.AJUSTADO:
+            # Solo permitimos AJUSTADO si el usuario puede aplicar ajustes
+            if not usuario_puede_aplicar_ajustes(request.user):
+                # Revertimos al estado anterior y bloqueamos
+                obj.estado = estado_anterior or EstadoConteo.BORRADOR
+                obj.save(update_fields=["estado"])
+                raise ValidationError(
+                    "No tienes permisos para marcar un conteo como 'Ajustado'. "
+                    "Los ajustes solo pueden aplicarse por un supervisor/autorizado."
+                )
+
+            # Además, por regla de negocio: solo se puede ajustar si estaba CERRADO
+            if estado_anterior != EstadoConteo.CERRADO:
+                obj.estado = estado_anterior or EstadoConteo.BORRADOR
+                obj.save(update_fields=["estado"])
+                raise ValidationError("Solo se puede ajustar un conteo que esté en estado 'Cerrado'.")
+
+        # 3) Validación SIEMPRE que el estado quede en CERRADO
+        if obj.estado == EstadoConteo.CERRADO:
+            # Reconciliar por seguridad antes de validar (por si cambiaron ítems)
             conciliar_conteo(obj, aplicar_ajustes=False, usuario=request.user)
 
-        if obj.tiene_diferencias_criticas and not usuario_es_supervisor(request.user):
-            obj.estado = EstadoConteo.BORRADOR
-            obj.save(update_fields=["estado"])
-            raise ValidationError(
-                "Este conteo tiene diferencias críticas. "
-                "Debe ser cerrado y aprobado por un supervisor."
-            )
+            # Si hay diferencias críticas y NO es supervisor -> bloquear SIEMPRE
+            if obj.tiene_diferencias_criticas and not usuario_es_supervisor(request.user):
+                obj.estado = EstadoConteo.BORRADOR
+                obj.save(update_fields=["estado"])
+                raise ValidationError(
+                    "Este conteo tiene diferencias críticas. "
+                    "Debe ser cerrado y aprobado por un supervisor."
+                )
 
-        if obj.tiene_diferencias_criticas and usuario_es_supervisor(request.user):
-            obj.aprobado_por = request.user
-            obj.aprobado_en = timezone.now()
-            obj.save(update_fields=["aprobado_por", "aprobado_en"])
+            # Si hay diferencias críticas y SÍ es supervisor -> registrar aprobación
+            if obj.tiene_diferencias_criticas and usuario_es_supervisor(request.user):
+                obj.aprobado_por = request.user
+                obj.aprobado_en = timezone.now()
+                obj.save(update_fields=["aprobado_por", "aprobado_en"])
+
 
